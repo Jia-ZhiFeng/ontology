@@ -1,0 +1,197 @@
+{
+  "scenario_id": "UAT-ACTION-CHAIN-002",
+  "dataset_version": "1.0.0",
+  "description": "个人信审八 Action 正向闭环：反欺诈进入人工复核，电核存疑，最终记录决策建议。",
+  "synthetic": true,
+  "application_id": "UATAC202608260007",
+  "workflow_request_id": "uat-action-chain-002-workflow-v1",
+  "required_runtime": {
+    "CREDIT_PROVIDER_MODE": "sandbox",
+    "CREDIT_CONSENT_MODE": "sandbox",
+    "FRAUD_PROVIDER_MODE": "sandbox",
+    "PHONE_TASK_DISPATCH_MODE": "sandbox"
+  },
+  "deterministic_expectations": {
+    "fraud_provider_request_id": "FP535911FE289E47CF5DA5AA06A81E",
+    "fraud_score": 63.48,
+    "fraud_result": "人工复核",
+    "risk_level": ["中", "高"],
+    "risk_check_result": "待人工复核",
+    "phone_conclusion": "存疑",
+    "manual_review_routing_result": "转人工",
+    "final_boundary": "recommendation_only_not_final_approval"
+  },
+  "actions": [
+    {
+      "position": 1,
+      "action_name": "create_loan_application",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "application": {
+          "submit_date": "2026-08-26T10:00:00+08:00",
+          "channel": "经销商APP",
+          "loan_amount": 120000,
+          "loan_term": 36,
+          "interest_rate": 0.048,
+          "application_status": "评估中"
+        },
+        "borrower": {
+          "id_number": "11010119900102001X",
+          "name": "验收借款人甲",
+          "phone": "13900009004",
+          "gender": "男",
+          "address": "北京市验收测试区合成数据路1号",
+          "marital_status": "已婚",
+          "monthly_income": 18000,
+          "employer": "合成数据科技有限公司"
+        },
+        "vehicle": {
+          "vin": "LHGCM8260UAT00002",
+          "brand": "验收品牌",
+          "model": "闭环测试车型",
+          "invoice_price": 180000,
+          "guide_price": 200000,
+          "pledge_status": "未抵押"
+        },
+        "dealer": {
+          "credit_code": "UATDEALER202608260007",
+          "dealer_name": "合成验收汽车经销商",
+          "location": "北京市验收测试区"
+        },
+        "guarantor": {
+          "id_number": "110101198501020029",
+          "name": "验收担保人乙",
+          "phone": "13900009005",
+          "gender": "女",
+          "address": "北京市验收测试区合成数据路2号",
+          "marital_status": "已婚",
+          "monthly_income": 22000,
+          "employer": "合成担保服务有限公司",
+          "guarantee_rating": "良",
+          "guarantee_count": 1,
+          "guarantee_total": 100000
+        },
+        "co_borrower": {
+          "id_number": "110101199501020036",
+          "name": "验收共借人丙",
+          "phone": "13900009006",
+          "gender": "女",
+          "address": "北京市验收测试区合成数据路3号",
+          "marital_status": "未婚",
+          "monthly_income": 12000,
+          "employer": "合成数据运营有限公司"
+        }
+      },
+      "expected": {
+        "business_write": "LoanApplication、NaturalPerson、Vehicle、Dealer 及本体关系",
+        "downstream_ready": ["request_credit_report", "request_fraud_report"]
+      }
+    },
+    {
+      "position": 2,
+      "action_name": "request_credit_report",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "subject_id_number": "11010119900102001X",
+        "authorization_reference": "SANDBOX-CONSENT:UATAC202608260007",
+        "query_purpose": "贷款审批"
+      },
+      "expected": {
+        "provider_mode": "sandbox",
+        "synthetic": true,
+        "business_write": "CreditReport"
+      }
+    },
+    {
+      "position": 3,
+      "action_name": "request_fraud_report",
+      "payload": {
+        "application_id": "UATAC202608260007"
+      },
+      "expected": {
+        "provider_mode": "sandbox",
+        "fraud_score": 63.48,
+        "result": "人工复核",
+        "business_write": "AntiFraudReport",
+        "downstream_ready": ["generate_risk_assessment"]
+      }
+    },
+    {
+      "position": 4,
+      "action_name": "generate_risk_assessment",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "assessment_version": "uat-risk-v1",
+        "data_snapshot_policy": "repeatable_read_read_only"
+      },
+      "expected": {
+        "risk_level": ["中", "高"],
+        "check_result": "待人工复核",
+        "business_write": "RiskAssessmentReport",
+        "downstream_ready": ["create_phone_verification_task"]
+      }
+    },
+    {
+      "position": 5,
+      "action_name": "create_phone_verification_task",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "verification_round": 1,
+        "trigger_reason": "UAT：反欺诈人工复核触发电话核验"
+      },
+      "expected": {
+        "dispatch_mode": "sandbox",
+        "business_write": "PhoneVerificationTask 与待回填 PhoneVerificationRecord",
+        "downstream_ready": ["record_phone_verification"]
+      }
+    },
+    {
+      "position": 6,
+      "action_name": "record_phone_verification",
+      "payload": {
+        "verification_id": "${create_phone_verification_task.result.verification_id}",
+        "verifier_identity": "mvp-phone-result-adapter",
+        "call_time": "${runtime.now_iso}",
+        "duration_seconds": 286,
+        "conclusion": "存疑",
+        "doubts": "UAT 合成场景：借款人对近期融资查询用途解释不完整，需人工复核。",
+        "recording_file_id": "UATREC202608260007"
+      },
+      "expected": {
+        "conclusion": "存疑",
+        "business_write": "不可变电核终态与回调收据",
+        "downstream_ready": ["trigger_manual_review"]
+      }
+    },
+    {
+      "position": 7,
+      "action_name": "trigger_manual_review",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "review_reason": "UAT：反欺诈需复核且电核结论存疑",
+        "source_execution_id": "${record_phone_verification.execution_id}"
+      },
+      "expected": {
+        "matched_rules": ["FRAUD_REVIEW_REQUIRED", "PHONE_DOUBT"],
+        "routing_result": "转人工",
+        "business_write": "ManualReviewRecord 与申请路由状态",
+        "downstream_ready": ["record_decision_recommendation"]
+      }
+    },
+    {
+      "position": 8,
+      "action_name": "record_decision_recommendation",
+      "payload": {
+        "application_id": "UATAC202608260007",
+        "recommendation_version": "uat-recommendation-v1",
+        "approver_id": "mvp-risk-manager",
+        "approval_assertion": "我确认该记录仅为决策建议，不代表最终审批"
+      },
+      "expected": {
+        "decision_authority": "recommendation_only",
+        "business_write": "DecisionRecommendation、确认身份与证据链",
+        "workflow_status": "COMPLETED"
+      }
+    }
+  ]
+}

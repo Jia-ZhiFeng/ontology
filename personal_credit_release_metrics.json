@@ -22,7 +22,7 @@
   "audit": {
     "checks_total": 16,
     "checks_passed": 16,
-    "digest": "4106e0ab2af9f2b319ff8f2a2f5d1c5feb3773840893cc682b0211e072a4aedf"
+    "digest": "61c74ca6b174266651c59c88c2471fcb764d05cc23b8916a935cbd445070ed2e"
   },
   "graph": {
     "tbox_vertices": 126,

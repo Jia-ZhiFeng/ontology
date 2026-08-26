@@ -18,6 +18,7 @@ Action 层分层、统一返回信封和 Function 注册中心边界见 `PERSONA
 8 个 Action 的请求/响应、步骤 DAG、状态机、权限、幂等、审计、错误码、重试和补偿设计见 `PERSONAL_CREDIT_ACTION_DESIGN.md`；机器可读目录位于 `backend/app/action/action_design_catalog.py`。
 
 申请级流程编排见 `PERSONAL_CREDIT_WORKFLOW_ORCHESTRATION.md`。它把 8 个 Action 组织为持久化流程，支持征信/反欺诈并行、人工复核条件跳过、Outbox 状态自动对账、崩溃租约恢复和追加式流程审计；流程终点仍只是决策建议。
+八 Action 合成业务验收数据、独立 `mvp_uat` 存储、沙箱启用和可重复执行方式见 `ACTION_CHAIN_UAT_GUIDE.md`；业务结果只允许由对应 Action 生成，不通过 SQL 预填。
 首个风险评估 Action 的 API、写入规则、跨库补偿和真实受控验收见 `PERSONAL_CREDIT_GENERATE_RISK_ASSESSMENT_ACTION.md`。
 受控进件 Action 的请求、主数据复用、事务写入、图同步与补偿边界见 `PERSONAL_CREDIT_CREATE_LOAN_APPLICATION_ACTION.md`。
 受控征信查询 Action 的授权、供应商幂等收据、沙箱边界、报告/HOLDS 写入和补偿见 `PERSONAL_CREDIT_REQUEST_CREDIT_REPORT_ACTION.md`。
@@ -140,4 +141,4 @@ PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
 ```
 
-前者执行252个后端单元测试，覆盖全部8个 Action、申请级流程编排、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、未接功能边界和运行表格文本转义。
+前者执行254个后端单元测试，覆盖全部8个 Action、申请级流程编排、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、未接功能边界和运行表格文本转义。

@@ -87,7 +87,7 @@ PERSONAL_CREDIT_INTERFACE_CATALOG = {
                 axiom("AX-RSK-002", "高风险禁止直接通过", "PD达到或超过阈值时不得直接给出通过结论。", "pd_value >= threshold implies check_result != 通过 and decision_result != 通过", ["RiskAssessmentReport", "LoanApplication.decision_result"]),
                 axiom("AX-FRD-001", "欺诈评分范围", "欺诈评分必须在0到100之间。", "0 <= fraud_score <= 100", ["AntiFraudReport.fraud_score"]),
                 axiom("AX-FRD-002", "高欺诈分转人工", "欺诈评分大于70时结果必须为人工复核或拒绝。", "fraud_score > 70 implies result in [人工复核,拒绝]", ["AntiFraudReport"]),
-                axiom("AX-PHN-001", "电核存疑转人工", "电核结论为存疑或存在存疑点时申请不得直接通过。", "conclusion=存疑 or doubts present implies decision_result in [转人工,补充材料]", ["PhoneVerificationRecord", "LoanApplication.decision_result"]),
+                axiom("AX-PHN-001", "电核存疑转人工", "电核结论为存疑或存在存疑点时申请不得直接通过。", "conclusion=存疑 or doubts present implies decision_result != 通过", ["PhoneVerificationRecord", "LoanApplication.decision_result"]),
                 axiom("AX-SHC-001", "同联系方式有效", "同联系方式关系不能自连，且匹配值不能为空。", "source != target and matched_value not in [NULL,empty]", ["SHARES_CONTACT"]),
             ],
         ),

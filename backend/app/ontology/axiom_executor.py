@@ -430,10 +430,15 @@ def ax_phn_001(ctx):
     violations = []
     for row in rows:
         app = ctx.applications.get(str(row.get("application_id"))) or {}
-        if app.get("decision_result") not in {"转人工", "补充材料"}:
+        # The phone-result Action only records the factual terminal result.  A
+        # NULL decision is therefore a valid transient state before the next
+        # workflow Action routes the application to manual review.  The axiom
+        # forbids a doubtful call from being passed directly; it must not make
+        # that downstream routing Action impossible to reach.
+        if app.get("decision_result") == "通过":
             violations.append(_record(
                 "phone_verification_record", row.get("verification_id"),
-                "电核存疑时申请必须转人工或补充材料", ["conclusion", "doubts", "decision_result"],
+                "电核存疑时申请不得直接通过", ["conclusion", "doubts", "decision_result"],
                 application_id=row.get("application_id"),
             ))
     return _result(len(ctx.rows("phone_verification_record")), len(rows), violations)

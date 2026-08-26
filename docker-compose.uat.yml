@@ -1,0 +1,7 @@
+services:
+  backend:
+    environment:
+      CREDIT_PROVIDER_MODE: sandbox
+      CREDIT_CONSENT_MODE: sandbox
+      FRAUD_PROVIDER_MODE: sandbox
+      PHONE_TASK_DISPATCH_MODE: sandbox
