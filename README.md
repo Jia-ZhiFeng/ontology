@@ -56,7 +56,9 @@ Compose 会依次等待 PostgreSQL、NebulaGraph Meta/Storage/Graph、Storage Ho
 ## 访问与隐私
 
 - 除 `GET /api/health` 外，所有 `/api/*` 接口都要求请求头 `X-API-Key`，其值由服务端 `.env` 的 `MVP_API_KEY` 配置。
-- 首次打开前端后，在“访问与 LLM 配置”中填写同一令牌。前端仅保存到当前浏览器的 `sessionStorage`，关闭会话后清除。
+- 首次打开前端后，在“模型管理”的“MVP 服务访问”中填写同一令牌。前端仅保存到当前浏览器的 `sessionStorage`，关闭会话后清除。
+- 当前前端以候选 OntoStudio HTML 为唯一界面，通过 `frontend/live-backend.js` 对接真实服务。账号管理、权限管理和角色切换已从界面与源码删除；工作流 Action 使用后端 `request_fields` 生成字段化表单，不要求手写 JSON。
+- 提示词模板当前仅保留为候选设计预览，文档抽取也明确显示“后端尚未提供接口”；两者不会返回前端模拟结果。
 - `.env.example` 只提供占位值；接入真实业务数据前，必须为 `MVP_API_KEY`、PostgreSQL 和 NebulaGraph 分别更换强随机密钥，并确保 `.env` 不进入版本库或交付包。
 - PostgreSQL 数据、图谱快照、关联查询、映射报告和公理违规结果在 API 出口默认脱敏；数据库与图数据库内部值不被修改，因此不会影响公理校验、映射和同步。
 - LLM 只接收 Schema、字段结构、空值状态和类型占位符，不再发送 PostgreSQL 样本原值。允许的服务地址由 `LLM_ALLOWED_BASE_URLS` 精确白名单控制，多个地址以英文逗号分隔。
@@ -138,4 +140,4 @@ PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
 ```
 
-前者执行252个后端单元测试，覆盖全部8个 Action、申请级流程编排、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证本体卡片拖拽、无重叠初始布局、重置布局、流程编排以及运行监控入口。
+前者执行252个后端单元测试，覆盖全部8个 Action、申请级流程编排、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、未接功能边界和运行表格文本转义。

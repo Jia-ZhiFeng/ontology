@@ -1,155 +1,65 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const path = require("node:path");
 
-const html = fs.readFileSync(require("node:path").join(__dirname, "index.html"), "utf8");
-const lines = html.split(/\r?\n/);
+const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const adapter = fs.readFileSync(path.join(__dirname, "live-backend.js"), "utf8");
+const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
 
-function functionLine(name) {
-  const prefix = `function ${name}`;
-  const matches = lines.filter((line) => line.startsWith(prefix));
-  assert.equal(matches.length, 1, `${name} 应且只能定义一次`);
-  return matches[0];
-}
+assert.equal(inlineScripts.length, 1, "候选 HTML 原生脚本应保持单一入口");
+new vm.Script(inlineScripts[0], {filename: "candidate-ui.js"});
+new vm.Script(adapter, {filename: "live-backend.js"});
+assert.ok(html.includes('<script src="live-backend.js"></script>'), "候选页面应加载真实后端适配层");
+assert.ok(html.includes("OntoStudio · 本体建模平台"), "应保留候选 HTML 标题");
+assert.ok(html.includes('id="sidebar"'), "应保留候选侧栏");
+assert.ok(html.includes('id="page-model"'), "应保留候选树形建模页面");
+assert.ok(html.includes('id="page-actions"'), "应保留候选动作页面");
+assert.ok(html.includes('id="page-axioms"'), "应保留候选公理页面");
+assert.ok(html.includes('id="page-graph"'), "应保留候选星图页面");
+assert.ok(html.includes('id="page-data"'), "应保留候选数据关联页面");
+assert.ok(html.includes('id="page-models"'), "应保留候选模型管理页面");
+assert.equal(html.includes('data-page="accounts"'), false, "账号管理导航必须删除");
+assert.equal(html.includes('data-page="perms"'), false, "权限管理导航必须删除");
+assert.equal(html.includes('id="page-accounts"'), false, "账号管理页面必须删除");
+assert.equal(html.includes('id="page-perms"'), false, "权限管理页面必须删除");
+assert.equal(html.includes('id="role-sel"'), false, "顶栏角色切换必须删除");
+assert.equal(html.includes("function renderAccounts"), false, "账号管理实现必须从源码删除");
+assert.equal(html.includes("function renderPerms"), false, "权限管理实现必须从源码删除");
+assert.equal(html.includes("PLATFORM.users"), false, "账号演示数据必须从源码删除");
+assert.equal(html.includes("ROLE_NAMES"), false, "角色字典必须从源码删除");
+assert.equal(html.includes("state.role"), false, "角色状态必须从源码删除");
+assert.equal(html.includes("role-sel"), false, "角色切换样式和遗留命名必须删除");
+assert.ok(html.includes('data-page="runtime"'), "应启用候选预留的实例图谱/动作运行入口");
+assert.ok(html.includes('id="page-runtime"'), "应增加统一业务运行页面");
 
-assert.equal((html.match(/function startNodeDrag\s*\(/g) || []).length, 1, "节点拖拽实现不能重复");
-assert.equal((html.match(/function startPropertyDrag\s*\(/g) || []).length, 0, "已废弃的属性拖拽函数应完全删除");
-assert.equal(html.includes("ghost.textContent=`迁移 ${prop.name}`"), false, "已废弃的属性拖拽迁移实现应删除");
-assert.ok(html.includes('id="operations"'), "应提供 Outbox 运行监控页面");
-assert.ok(html.includes("api('/actions/outbox/alerts?limit=100')"), "监控页应读取死信告警接口");
-assert.ok(html.includes("/replay`"), "监控页应调用人工重放接口");
-assert.ok(html.includes("原 Action 终态"), "人工重放界面应明确保留原 Action 历史语义");
-assert.ok(html.includes('id="operationsBadge"'), "导航应提供活动告警红点");
-assert.ok(html.includes("api('/operations/summary')"), "运行监控应读取主动告警摘要");
-assert.ok(html.includes("api('/operations/circuits')"), "运行监控应展示外部依赖熔断器");
-assert.ok(html.includes("operateOnAlert(item,'acknowledge')"), "告警应支持确认处理");
-assert.ok(html.includes("operateOnAlert(item,'resolve')"), "告警应支持标记解决");
-assert.ok(html.includes('id="workflows"'), "应提供个人信审流程编排页面");
-assert.ok(html.includes("api('/workflows/personal-credit/summary')"), "流程页应读取流程摘要");
-assert.ok(html.includes('/steps/${encodeURIComponent(actionName)}/execute'), "流程页应通过编排接口派发 Action");
-assert.ok(html.includes('trigger_manual_review'), "流程时间线应包含条件人工复核步骤");
-assert.ok(html.includes('不代表最终审批'), "流程页必须保留决策建议安全边界");
+for (const route of [
+  "/ontology/baseline", "/ontology/generate", "/ontology/versions/drafts",
+  "/ontology/git/status", "/postgres/schema", "/llm/test", "/kg/snapshot",
+  "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
+  "/workflows/personal-credit/summary", "/operations/summary",
+  "/operations/alerts", "/operations/circuits", "/actions/outbox/status",
+  "/actions/outbox/alerts", "/replay",
+]) assert.ok(adapter.includes(route), `后端适配缺少接口：${route}`);
 
-const layoutEffects = { updateCalls: 0, message: null };
-const layoutContext = {
-  console,
-  graphPreview: { clientWidth: 1200 },
-  ontologyMsg: {},
-  selectedOntologyName: "Vehicle",
-  show(_element, message, ok) {
-    layoutEffects.message = { message, ok };
-  },
-  updatePreviewPositions() {
-    layoutEffects.updateCalls += 1;
-  },
-  renderOntologyPreview() {
-    throw new Error("已有预览时不应重新渲染本体");
-  },
-};
-layoutContext.previewState = {
-  svg: {
-    attrs: {},
-    style: {},
-    setAttribute(name, value) {
-      this.attrs[name] = value;
-    },
-  },
-  nodes: Array.from({ length: 9 }, (_, index) => ({
-    id: `Type${index + 1}`,
-    width: 250,
-    height: 173,
-    x: 0,
-    y: 0,
-  })),
-  edges: [],
-  width: 760,
-  height: 560,
-  ontology: { version: "unchanged" },
-};
-vm.createContext(layoutContext);
-vm.runInContext(functionLine("applyPreviewGridLayout"), layoutContext);
-vm.runInContext(functionLine("resetPreviewLayout"), layoutContext);
+assert.ok(adapter.includes("proposalToOntology"), "应将后端本体转换为候选页面数据模型");
+assert.ok(adapter.includes("ontologyToProposal"), "应将候选编辑结果转换回后端本体");
+assert.ok(adapter.includes("candidateRenderModels"), "模型配置应扩展候选页面而不是覆盖页面");
+assert.ok(adapter.includes("candidateDrawTab"), "版本治理应扩展候选标签而不是覆盖建模页面");
+assert.equal(adapter.includes("renderList=refreshHome"), false, "不得整体替换候选本体列表");
+assert.equal(adapter.includes("renderModel=window"), false, "不得整体替换候选建模页面");
+assert.equal(adapter.includes("JSON.stringify(data,null,2)"), false, "默认界面不得铺开接口 JSON");
+assert.equal(adapter.includes('id="runtime-payload"'), false, "工作流执行不得要求手写 JSON");
+assert.ok(adapter.includes("workflowDefinition"), "工作流表单必须读取后端工作流定义");
+assert.ok(adapter.includes("data-workflow-field"), "工作流执行必须使用字段化表单");
+assert.ok(adapter.includes("buildWorkflowPayload"), "字段化表单必须受控构造 Action 请求");
+assert.ok(adapter.includes(".workflow-form [hidden]{display:none!important}"), "可选业务分组默认必须真正隐藏");
+assert.ok(adapter.includes("trustedCell"), "运行表格必须显式区分可信控件与后端文本");
+assert.equal(adapter.includes("value.indexOf('<')"), false, "不得把含尖括号的后端文本直接当 HTML");
+assert.equal(html.includes("function tryTpl"), false, "不得保留提示词模板模拟试运行");
+assert.equal(html.includes("模型返回结构化候选 JSON（演示）"), false, "不得展示模拟模型结果");
+assert.ok(html.includes("待后端接口"), "未接入的提示词模板能力必须明确标注");
+assert.ok(adapter.includes("不代表最终审批"), "流程页必须保留决策建议安全边界");
+assert.ok(adapter.includes("不会改写原 Action 终态"), "Outbox 重放必须保留历史终态语义");
 
-layoutContext.applyPreviewGridLayout();
-const initialPositions = layoutContext.previewState.nodes.map(({ x, y }) => ({ x, y }));
-let overlaps = 0;
-for (let left = 0; left < layoutContext.previewState.nodes.length; left += 1) {
-  for (let right = left + 1; right < layoutContext.previewState.nodes.length; right += 1) {
-    const a = layoutContext.previewState.nodes[left];
-    const b = layoutContext.previewState.nodes[right];
-    if (
-      Math.abs(a.x - b.x) < (a.width + b.width) / 2
-      && Math.abs(a.y - b.y) < (a.height + b.height) / 2
-    ) overlaps += 1;
-  }
-}
-assert.equal(overlaps, 0, "初始网格布局不应出现卡片重叠");
-assert.ok(layoutContext.previewState.height > 560, "节点较多时画布应自动增高");
-
-const ontologyReference = layoutContext.previewState.ontology;
-layoutContext.previewState.nodes[0].x += 80;
-layoutContext.previewState.nodes[0].y += 60;
-layoutContext.resetPreviewLayout();
-assert.deepEqual(
-  layoutContext.previewState.nodes.map(({ x, y }) => ({ x, y })),
-  initialPositions,
-  "重置应恢复初始网格坐标",
-);
-assert.equal(layoutContext.previewState.ontology, ontologyReference, "重置不得替换或修改本体对象");
-assert.equal(layoutContext.selectedOntologyName, "Vehicle", "重置不得清除当前选中本体");
-assert.equal(layoutEffects.updateCalls, 1, "重置后应刷新一次节点和关系坐标");
-assert.deepEqual(layoutEffects.message, { message: "本体节点已恢复为无重叠初始布局", ok: true });
-
-const listeners = new Map();
-const group = {
-  captured: null,
-  released: null,
-  setPointerCapture(pointerId) { this.captured = pointerId; },
-  hasPointerCapture(pointerId) { return this.captured === pointerId; },
-  releasePointerCapture(pointerId) { this.released = pointerId; },
-  addEventListener(name, listener) { listeners.set(name, listener); },
-  removeEventListener(name) { listeners.delete(name); },
-};
-const dragNode = { x: 150, y: 100, width: 250, height: 173, group };
-const dragEffects = { updateCalls: 0 };
-const dragContext = {
-  console,
-  suppressOntologyClick: false,
-  previewState: { width: 1200, height: 627 },
-  updatePreviewPositions() { dragEffects.updateCalls += 1; },
-};
-vm.createContext(dragContext);
-vm.runInContext(functionLine("startNodeDrag"), dragContext);
-const svg = {
-  createSVGPoint() {
-    return {
-      x: 0,
-      y: 0,
-      matrixTransform() { return { x: this.x, y: this.y }; },
-    };
-  },
-  getScreenCTM() { return { inverse() { return {}; } }; },
-};
-dragContext.startNodeDrag({
-  isPrimary: true,
-  button: 0,
-  pointerId: 7,
-  clientX: 150,
-  clientY: 100,
-  preventDefault() {},
-}, dragNode, svg);
-listeners.get("pointermove")({ clientX: 360, clientY: 280 });
-listeners.get("pointerup")({ pointerId: 7 });
-assert.deepEqual({ x: dragNode.x, y: dragNode.y }, { x: 360, y: 280 }, "拖动应更新节点坐标");
-assert.equal(dragEffects.updateCalls, 1, "拖动应刷新关系位置");
-assert.equal(dragContext.suppressOntologyClick, true, "拖动完成后应抑制同一次手势产生的点击");
-assert.equal(group.released, 7, "拖动结束应释放 pointer capture");
-assert.equal(listeners.size, 0, "拖动结束应移除临时监听器");
-
-console.log(JSON.stringify({
-  valid: true,
-  node_count: layoutContext.previewState.nodes.length,
-  overlaps,
-  canvas_height: layoutContext.previewState.height,
-  drag_position: { x: dragNode.x, y: dragNode.y },
-}));
+console.log(JSON.stringify({valid:true,candidate_scripts:inlineScripts.length,adapter:true}));

@@ -110,10 +110,15 @@ class PersonalCreditWorkflowTests(unittest.TestCase):
         routes = (ROOT / "backend/app/api/routes.py").read_text(encoding="utf-8")
         main = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")
         frontend = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+        frontend_adapter = (ROOT / "frontend/live-backend.js").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("/workflows/personal-credit", routes)
         self.assertIn("/steps/{action_name}/execute", routes)
         self.assertIn("workflow_repository.reconcile_active", main)
-        self.assertIn('id="workflows"', frontend)
+        self.assertIn('id="page-runtime"', frontend)
+        self.assertIn("window.renderRuntime", frontend_adapter)
+        self.assertIn("/workflows/personal-credit/summary", frontend_adapter)
 
 
 if __name__ == "__main__":
