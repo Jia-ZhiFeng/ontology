@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "as_of": "2026-08-24",
+  "release_version": "1.1.0",
+  "model": {
+    "object_types": 9,
+    "properties": 74,
+    "link_types": 11,
+    "interfaces": 6,
+    "axioms": 26,
+    "functions": 9,
+    "action_types": 8,
+    "dynamic_security": 8
+  },
+  "database": {
+    "tables": 9,
+    "fields_total": 75,
+    "fields_modeled": 74,
+    "fields_intentionally_excluded": 1,
+    "relation_source_fields": 12
+  },
+  "audit": {
+    "checks_total": 16,
+    "checks_passed": 16,
+    "digest": "4106e0ab2af9f2b319ff8f2a2f5d1c5feb3773840893cc682b0211e072a4aedf"
+  },
+  "graph": {
+    "tbox_vertices": 126,
+    "tbox_edges": 221,
+    "abox_entities": 25,
+    "business_relation_edges": 25,
+    "instance_of_edges": 25,
+    "abox_edges_total": 50,
+    "total_vertices": 151,
+    "total_edges": 271
+  }
+}

@@ -1,0 +1,147 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: credit-mvp-postgres
+    environment:
+      POSTGRES_DB: credit_ontology
+      POSTGRES_USER: credit
+      POSTGRES_PASSWORD: credit123
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/credit_ontology_seed.sql:/docker-entrypoint-initdb.d/01_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U credit -d credit_ontology"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  metad0:
+    image: vesoft/nebula-metad:v3.8.0
+    command: ["--meta_server_addrs=metad0:9559", "--local_ip=metad0", "--ws_ip=metad0", "--port=9559", "--ws_http_port=19559"]
+    volumes: ["nebula_meta:/usr/local/nebula/data/meta"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://metad0:19559/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  storaged0:
+    image: vesoft/nebula-storaged:v3.8.0
+    command: ["--meta_server_addrs=metad0:9559", "--local_ip=storaged0", "--ws_ip=storaged0", "--port=9779", "--ws_http_port=19779"]
+    depends_on:
+      metad0: {condition: service_healthy}
+    volumes: ["nebula_storage:/usr/local/nebula/data/storage"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://storaged0:19779/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  graphd:
+    image: vesoft/nebula-graphd:v3.8.0
+    command: ["--meta_server_addrs=metad0:9559", "--local_ip=graphd", "--ws_ip=graphd", "--port=9669", "--ws_http_port=19669"]
+    depends_on:
+      metad0: {condition: service_healthy}
+      storaged0: {condition: service_healthy}
+    ports: ["9669:9669"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://graphd:19669/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  nebula-init:
+    image: vesoft/nebula-console:v3.8.0
+    environment:
+      NEBULA_USER: ${NEBULA_USER:-root}
+      NEBULA_PASSWORD: ${NEBULA_PASSWORD:-nebula}
+    depends_on:
+      graphd: {condition: service_healthy}
+      storaged0: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        max_attempts=60
+        attempt=1
+        hosts_output=""
+
+        while [ "$$attempt" -le "$$max_attempts" ]; do
+          if hosts_output="$$(nebula-console -addr graphd -port 9669 -u "$$NEBULA_USER" -p "$$NEBULA_PASSWORD" -e 'SHOW HOSTS;' 2>&1)"; then
+            break
+          fi
+          if [ "$$attempt" -eq "$$max_attempts" ]; then
+            printf '%s\n' 'NebulaGraph graphd did not become queryable before timeout.' >&2
+            printf '%s\n' "$$hosts_output" >&2
+            exit 1
+          fi
+          attempt=$$((attempt + 1))
+          sleep 2
+        done
+
+        if ! printf '%s\n' "$$hosts_output" | grep -q 'storaged0'; then
+          nebula-console -addr graphd -port 9669 -u "$$NEBULA_USER" -p "$$NEBULA_PASSWORD" -e 'ADD HOSTS "storaged0":9779;'
+        else
+          printf '%s\n' 'NebulaGraph storage host is already registered.'
+        fi
+
+        attempt=1
+        while [ "$$attempt" -le "$$max_attempts" ]; do
+          if hosts_output="$$(nebula-console -addr graphd -port 9669 -u "$$NEBULA_USER" -p "$$NEBULA_PASSWORD" -e 'SHOW HOSTS;' 2>&1)" \
+            && printf '%s\n' "$$hosts_output" | grep 'storaged0' | grep -q 'ONLINE'; then
+            printf '%s\n' 'NebulaGraph storage host is ONLINE.'
+            exit 0
+          fi
+          attempt=$$((attempt + 1))
+          sleep 2
+        done
+
+        printf '%s\n' 'NebulaGraph storage host did not reach ONLINE before timeout.' >&2
+        printf '%s\n' "$$hosts_output" >&2
+        exit 1
+    restart: "no"
+
+  backend:
+    build: ./backend
+    container_name: credit-mvp-backend
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+      graphd: {condition: service_healthy}
+      nebula-init: {condition: service_completed_successfully}
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://localhost:8000/api/health',timeout=3)); assert data.get('status')=='ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    container_name: credit-mvp-frontend
+    depends_on:
+      backend: {condition: service_healthy}
+    ports: ["8080:80"]
+    volumes: ["./frontend:/usr/share/nginx/html:ro"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  nebula_meta:
+  nebula_storage:

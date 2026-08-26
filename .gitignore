@@ -1,0 +1,43 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# Python caches, environments and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime logs and temporary files
+*.log
+*.pid
+*.tmp
+tmp/
+temp/
+
+# Local database / graph volumes and exports
+postgres_data/
+nebula_meta/
+nebula_storage/
+data/
+
+# Frontend dependency/build output if introduced later
+node_modules/
+dist/
+build/
+coverage/
