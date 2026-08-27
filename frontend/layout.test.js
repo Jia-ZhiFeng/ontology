@@ -35,7 +35,7 @@ assert.ok(html.includes('id="page-runtime"'), "应增加统一业务运行页面
 
 for (const route of [
   "/ontology/baseline", "/ontology/generate", "/ontology/versions/drafts",
-  "/ontology/git/status", "/postgres/schema", "/llm/test", "/kg/snapshot",
+  "/ontology/git/status", "/postgres/schema", "/llm/test",
   "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
   "/workflows/personal-credit/summary", "/workflows/personal-credit/data-search",
   "/operations/summary",
@@ -66,6 +66,14 @@ assert.ok(adapter.includes("覆盖已填写字段"), "自动回填必须让用�
 assert.ok(adapter.includes("保留当前申请编号、提交时间和初始状态"), "历史资料复用不得覆盖当前业务事件身份");
 assert.ok(adapter.includes("data-prefill-source"), "数据库回填字段必须显示来源标记");
 assert.ok(adapter.includes(".workflow-form [hidden]{display:none!important}"), "可选业务分组默认必须真正隐藏");
+assert.ok(adapter.includes('id="instance-graph-svg"'), "实例图谱必须使用可交互 SVG 星图画布");
+assert.ok(adapter.includes("normalizeInstanceNode"), "实例图谱必须将真实图数据库节点转换为视图模型");
+assert.ok(adapter.includes("stepInstanceSimulation"), "实例图谱必须提供节点关系力导向布局");
+assert.ok(adapter.includes("instanceVisibleGraph"), "实例图谱必须支持邻域与类型关系筛选");
+assert.ok(adapter.includes("changeInstanceGraphMode"), "实例图谱必须支持业务关系与本体类型映射视图");
+assert.ok(adapter.includes("renderInstanceGraphDetail"), "实例图谱必须提供业务可读的节点关系详情");
+assert.ok(adapter.includes("mode:instanceGraphState.mode"), "实例图谱查询必须将视图范围传给后端");
+assert.equal(adapter.includes("function renderGraphTable"), false, "实例图谱不得退化为节点关系数据表");
 assert.ok(adapter.includes("governance-stage-rail"), "版本治理必须展示草稿到发布的阶段路径");
 assert.ok(adapter.includes("governanceVersionActions"), "版本操作必须跟随真实状态显示");
 assert.ok(adapter.includes("governanceEventRow"), "版本治理必须显示发布与回滚动态");
