@@ -60,6 +60,11 @@ assert.ok(adapter.includes("workflow-dashboard"), "信审流程必须提供申�
 assert.ok(adapter.includes("workflowCanCancel"), "信审流程必须按后端状态限制取消操作");
 assert.ok(adapter.includes("submitWorkflowCancellation"), "信审流程必须提供受控取消入口");
 assert.ok(adapter.includes("不会删除贷款申请、Action 结果或历史事件"), "取消流程必须明确保留业务事实和审计记录");
+assert.ok(adapter.includes("setWorkflowListMode"), "信审流程必须提供已完成流程独立视图");
+assert.ok(adapter.includes('id="workflow-completed-count"'), "已完成流程入口必须显示真实数量");
+assert.ok(adapter.includes("&status=COMPLETED"), "已完成流程必须通过后端状态条件独立查询");
+assert.ok(adapter.includes("row.completed_at||row.updated_at"), "已完成流程必须展示完成时间");
+assert.ok(adapter.includes("查看结果"), "已完成流程必须提供明确的结果查看入口");
 assert.ok(adapter.includes("workflowStepFacts"), "信审流程必须展示关键业务结果而非原始响应");
 assert.ok(adapter.includes("WORKFLOW_SYSTEM_FIELDS"), "服务端生成字段不得要求业务人员手工填写");
 assert.ok(adapter.includes("verification_id") && adapter.includes("source_execution_id"), "后续 Action 应自动承接前序执行标识");
