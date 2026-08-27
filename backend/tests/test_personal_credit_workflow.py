@@ -128,6 +128,19 @@ class PersonalCreditWorkflowTests(unittest.TestCase):
         self.assertEqual(summary["borrower"]["phone"], "138****5678")
         self.assertEqual(summary["application"]["loan_amount"], "[已脱敏]")
 
+    def test_manual_action_datasets_use_catalog_application_enums(self):
+        sources = "\n".join(
+            (ROOT / f"postgres/migrations/{name}").read_text(encoding="utf-8")
+            for name in (
+                "003_add_manual_action_test_dataset.sql",
+                "004_add_manual_action_test_dataset_002.sql",
+            )
+        )
+        self.assertNotIn("'手工联调'", sources)
+        self.assertNotIn("'待征信查询'", sources)
+        self.assertIn("'经销商APP'", sources)
+        self.assertIn("'评估中'", sources)
+
     def test_routes_and_background_reconciliation_are_integrated(self):
         routes = (ROOT / "backend/app/api/routes.py").read_text(encoding="utf-8")
         main = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")

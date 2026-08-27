@@ -56,7 +56,7 @@ INSERT INTO public.loan_application (
 ) VALUES (
   'UATMAN202608270002',
   '2026-08-27 11:15:00+08',
-  '手工联调',
+  '经销商APP',
   140000.00,
   48,
   0.0558,
@@ -65,7 +65,7 @@ INSERT INTO public.loan_application (
   'UATDEALER202608270002',
   '110101198809230082',
   '110101199612120093',
-  '待征信查询',
+  '评估中',
   NULL
 )
 ON CONFLICT (application_id) DO NOTHING;
