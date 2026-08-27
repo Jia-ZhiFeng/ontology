@@ -2,12 +2,13 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter,HTTPException
+from fastapi import APIRouter,HTTPException,Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel,ConfigDict
 from ..core.config import *
 from ..postgres.client import PostgresService
+from ..postgres.business_lookup import BusinessLookupError,PersonalCreditBusinessLookup
 from ..kg.nebula import NebulaGraphService
 from ..llm.client import LLMClient
 from ..ontology.generator import generate
@@ -290,6 +291,12 @@ class ExecutePersonalCreditWorkflowStepRequest(BaseModel):
 class WorkflowReasonRequest(BaseModel):
     model_config=ConfigDict(extra="forbid")
     reason:str
+
+class WorkflowDataSearchRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    entity_type:str
+    query:str
+    limit:int=8
 
 def _alert_notifier():
     if not ALERT_WEBHOOK_ENABLED:
@@ -961,6 +968,20 @@ async def personal_credit_workflow_definition():
             for position,action_name in enumerate(WORKFLOW_ACTIONS,start=1)
         ],
     }
+
+@router.post("/workflows/personal-credit/data-search")
+async def search_personal_credit_workflow_data(
+    req:WorkflowDataSearchRequest,response:Response
+):
+    try:
+        # This authenticated endpoint intentionally returns the selected source values
+        # needed by the Action form. Search previews are masked and the query is POSTed.
+        response.headers["Cache-Control"]="no-store"
+        return PersonalCreditBusinessLookup(postgres()).search(
+            req.entity_type,req.query,req.limit
+        )
+    except BusinessLookupError as error:
+        raise HTTPException(400,error_detail(error))
 
 @router.get("/workflows/personal-credit/{workflow_id}")
 async def get_personal_credit_workflow(workflow_id:str):

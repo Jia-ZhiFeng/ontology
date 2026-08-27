@@ -141,4 +141,4 @@ PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
 ```
 
-前者执行254个后端单元测试，覆盖全部8个 Action、申请级流程编排、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、未接功能边界和运行表格文本转义。
+前者执行257个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、数据库字段回填、未接功能边界和运行表格文本转义。

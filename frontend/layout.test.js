@@ -37,7 +37,8 @@ for (const route of [
   "/ontology/baseline", "/ontology/generate", "/ontology/versions/drafts",
   "/ontology/git/status", "/postgres/schema", "/llm/test", "/kg/snapshot",
   "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
-  "/workflows/personal-credit/summary", "/operations/summary",
+  "/workflows/personal-credit/summary", "/workflows/personal-credit/data-search",
+  "/operations/summary",
   "/operations/alerts", "/operations/circuits", "/actions/outbox/status",
   "/actions/outbox/alerts", "/replay", "/ontology/version-events",
   "/ontology/git/branches", "/ontology/git/tags",
@@ -58,6 +59,12 @@ assert.ok(adapter.includes("workflow-dashboard"), "信审流程必须提供申�
 assert.ok(adapter.includes("workflowStepFacts"), "信审流程必须展示关键业务结果而非原始响应");
 assert.ok(adapter.includes("WORKFLOW_SYSTEM_FIELDS"), "服务端生成字段不得要求业务人员手工填写");
 assert.ok(adapter.includes("verification_id") && adapter.includes("source_execution_id"), "后续 Action 应自动承接前序执行标识");
+assert.ok(adapter.includes("WORKFLOW_LOOKUP_CONFIG"), "Action 表单必须声明受控数据库检索范围");
+assert.ok(adapter.includes("searchWorkflowData"), "Action 表单必须接入数据库搜索");
+assert.ok(adapter.includes("applyWorkflowLookup"), "数据库搜索结果必须支持字段映射回填");
+assert.ok(adapter.includes("覆盖已填写字段"), "自动回填必须让用户控制字段覆盖行为");
+assert.ok(adapter.includes("保留当前申请编号、提交时间和初始状态"), "历史资料复用不得覆盖当前业务事件身份");
+assert.ok(adapter.includes("data-prefill-source"), "数据库回填字段必须显示来源标记");
 assert.ok(adapter.includes(".workflow-form [hidden]{display:none!important}"), "可选业务分组默认必须真正隐藏");
 assert.ok(adapter.includes("governance-stage-rail"), "版本治理必须展示草稿到发布的阶段路径");
 assert.ok(adapter.includes("governanceVersionActions"), "版本操作必须跟随真实状态显示");
