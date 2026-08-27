@@ -66,6 +66,12 @@ assert.ok(adapter.includes("&status=COMPLETED"), "已完成流程必须通过后
 assert.ok(adapter.includes("row.completed_at||row.updated_at"), "已完成流程必须展示完成时间");
 assert.ok(adapter.includes("查看结果"), "已完成流程必须提供明确的结果查看入口");
 assert.ok(adapter.includes("workflowStepFacts"), "信审流程必须展示关键业务结果而非原始响应");
+assert.ok(adapter.includes("openWorkflowStepIO"), "每个 Action 必须提供输入输出详情入口");
+assert.ok(adapter.includes("/actions/executions/"), "已执行 Action 必须加载完整执行详情");
+assert.ok(adapter.includes("step.input_summary"), "工作流详情必须展示脱敏后的有效输入摘要");
+assert.ok(adapter.includes("workflowFlattenIORows"), "Action 输入输出必须转为可读字段行而非 JSON 展示");
+assert.ok(adapter.includes("历史步骤未保存字段值"), "历史流程必须明确输入保存边界");
+assert.ok(adapter.includes("workflow-io-grid"), "Action 输入输出详情必须使用双栏业务布局");
 assert.ok(adapter.includes("WORKFLOW_SYSTEM_FIELDS"), "服务端生成字段不得要求业务人员手工填写");
 assert.ok(adapter.includes("verification_id") && adapter.includes("source_execution_id"), "后续 Action 应自动承接前序执行标识");
 assert.ok(adapter.includes("WORKFLOW_LOOKUP_CONFIG"), "Action 表单必须声明受控数据库检索范围");

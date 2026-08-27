@@ -58,7 +58,7 @@ Compose 会依次等待 PostgreSQL、NebulaGraph Meta/Storage/Graph、Storage Ho
 
 - 除 `GET /api/health` 外，所有 `/api/*` 接口都要求请求头 `X-API-Key`，其值由服务端 `.env` 的 `MVP_API_KEY` 配置。
 - 首次打开前端后，在“模型管理”的“MVP 服务访问”中填写同一令牌。前端仅保存到当前浏览器的 `sessionStorage`，关闭会话后清除。
-- 当前前端以候选 OntoStudio HTML 为唯一界面，通过 `frontend/live-backend.js` 对接真实服务。账号管理、权限管理和角色切换已从界面与源码删除；工作流 Action 使用后端 `request_fields` 生成字段化表单，不要求手写 JSON。
+- 当前前端以候选 OntoStudio HTML 为唯一界面，通过 `frontend/live-backend.js` 对接真实服务。账号管理、权限管理和角色切换已从界面与源码删除；工作流 Action 使用后端 `request_fields` 生成字段化表单，不要求手写 JSON，并可在每个步骤查看脱敏后的有效输入与完整业务输出。
 - 提示词模板当前仅保留为候选设计预览，文档抽取也明确显示“后端尚未提供接口”；两者不会返回前端模拟结果。
 - `.env.example` 只提供占位值；接入真实业务数据前，必须为 `MVP_API_KEY`、PostgreSQL 和 NebulaGraph 分别更换强随机密钥，并确保 `.env` 不进入版本库或交付包。
 - PostgreSQL 数据、图谱快照、关联查询、映射报告和公理违规结果在 API 出口默认脱敏；数据库与图数据库内部值不被修改，因此不会影响公理校验、映射和同步。
@@ -121,7 +121,7 @@ curl -H "X-API-Key: <MVP_API_KEY>" http://localhost:8000/api/kg/stats
 - `POST /api/workflows/personal-credit`：按新申请或已有申请入口创建幂等的个人信审流程实例
 - `GET /api/workflows/personal-credit/summary|definition`：读取流程数量、状态和 8 步依赖定义
 - `GET /api/workflows/personal-credit`：按申请编号或状态查询流程；详情包含步骤和追加式审计事件
-- `POST /api/workflows/personal-credit/{workflow_id}/steps/{action_name}/execute`：仅派发依赖已满足的 Action，不保存原始请求
+- `POST /api/workflows/personal-credit/{workflow_id}/steps/{action_name}/execute`：仅派发依赖已满足的 Action；不保存原始请求，只留存请求摘要和服务端校验、补齐并脱敏后的有效输入摘要
 - `POST /api/workflows/personal-credit/{workflow_id}/refresh`：根据 Action/Outbox 状态立即推进流程；后台也会定期自动对账
 - `POST /api/workflows/personal-credit/{workflow_id}/steps/{action_name}/skip`：填写原因后跳过条件人工复核；其他步骤不可跳过
 - `POST /api/workflows/personal-credit/{workflow_id}/cancel`：在没有运行中 Action 时取消编排，不删除既有业务事实和审计
@@ -142,4 +142,4 @@ PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
 ```
 
-前者执行257个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、数据库字段回填、数据源脱敏分页预览、未接功能边界和运行表格文本转义。
+前者执行258个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 输入摘要脱敏、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、Action 输入输出详情、数据库字段回填、数据源脱敏分页预览、未接功能边界和运行表格文本转义。

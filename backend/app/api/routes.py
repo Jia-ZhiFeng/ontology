@@ -1019,12 +1019,14 @@ async def execute_personal_credit_workflow_step(
             dispatch_request_id=dispatch_request_id,
         )
         model_payload=model.model_dump(mode="json")
+        input_summary=model.model_dump(mode="json",exclude_none=True)
         repository.validate_step_scope(workflow_id,action_name,model_payload)
         repository.begin_step(
             workflow_id,
             action_name,
             dispatch_request_id=dispatch_request_id,
             request_digest=workflow_request_digest(model_payload),
+            input_summary=input_summary,
             actor_id=MVP_WORKFLOW_ACTOR_ID,
         )
         _model_type,executor=_WORKFLOW_ACTION_EXECUTORS[action_name]

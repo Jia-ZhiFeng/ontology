@@ -158,6 +158,7 @@ WORKFLOW_SCHEMA_STATEMENTS = (
             REFERENCES mvp_control.action_executions(execution_id) ON DELETE RESTRICT,
         dispatch_request_id varchar(128),
         request_digest char(64),
+        input_summary jsonb,
         result_summary jsonb,
         last_error_code varchar(96),
         last_error_message varchar(500),
@@ -174,6 +175,10 @@ WORKFLOW_SCHEMA_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS personal_credit_workflow_steps_status_idx
     ON mvp_control.personal_credit_workflow_steps (status,updated_at)
+    """,
+    """
+    ALTER TABLE mvp_control.personal_credit_workflow_steps
+    ADD COLUMN IF NOT EXISTS input_summary jsonb
     """,
     """
     CREATE TABLE IF NOT EXISTS mvp_control.personal_credit_workflow_events (
@@ -585,6 +590,7 @@ class PostgresPersonalCreditWorkflowRepository:
         *,
         dispatch_request_id: str,
         request_digest: str,
+        input_summary: Mapping[str, Any] | None,
         actor_id: str,
     ) -> dict[str, Any]:
         self.ensure_schema()
@@ -592,6 +598,7 @@ class PostgresPersonalCreditWorkflowRepository:
             raise WorkflowError("WORKFLOW_STEP_NOT_FOUND", "流程步骤不存在")
         if not IDENTIFIER_PATTERN.fullmatch(dispatch_request_id):
             raise WorkflowError("WORKFLOW_REQUEST_INVALID", "派发请求编号格式无效")
+        safe_input = _safe_mapping(input_summary)
         with self.postgres.conn() as connection, connection.cursor() as cursor:
             workflow = self._workflow(cursor, workflow_id, lock=True)
             if workflow["status"] != "WAITING_INPUT":
@@ -618,7 +625,7 @@ class PostgresPersonalCreditWorkflowRepository:
                 """
                 UPDATE mvp_control.personal_credit_workflow_steps
                 SET status='RUNNING',attempt_count=attempt_count+1,
-                    dispatch_request_id=%s,request_digest=%s,
+                    dispatch_request_id=%s,request_digest=%s,input_summary=%s,
                     lease_expires_at=now()+(%s*interval '1 second'),
                     started_at=COALESCE(started_at,now()),updated_at=now(),
                     last_error_code=NULL,last_error_message=NULL
@@ -627,6 +634,7 @@ class PostgresPersonalCreditWorkflowRepository:
                 (
                     dispatch_request_id,
                     request_digest,
+                    Jsonb(safe_input),
                     self.dispatch_lease_seconds,
                     workflow_id,
                     action_name,
@@ -644,6 +652,7 @@ class PostgresPersonalCreditWorkflowRepository:
                 details={
                     "attempt_count": step["attempt_count"],
                     "request_digest": request_digest,
+                    "input_fields": sorted(safe_input),
                 },
             )
             self._recompute(cursor, workflow, actor_id=actor_id)
