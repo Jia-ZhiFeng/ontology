@@ -38,6 +38,7 @@ for (const route of [
   "/ontology/git/status", "/postgres/schema", "/postgres/data/", "/llm/test",
   "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
   "/workflows/personal-credit/summary", "/workflows/personal-credit/data-search",
+  "/cancel",
   "/operations/summary",
   "/operations/alerts", "/operations/circuits", "/actions/outbox/status",
   "/actions/outbox/alerts", "/replay", "/ontology/version-events",
@@ -56,6 +57,9 @@ assert.ok(adapter.includes("workflowDefinition"), "工作流表单必须读取�
 assert.ok(adapter.includes("data-workflow-field"), "工作流执行必须使用字段化表单");
 assert.ok(adapter.includes("buildWorkflowPayload"), "字段化表单必须受控构造 Action 请求");
 assert.ok(adapter.includes("workflow-dashboard"), "信审流程必须提供申请队列与流程详情工作台");
+assert.ok(adapter.includes("workflowCanCancel"), "信审流程必须按后端状态限制取消操作");
+assert.ok(adapter.includes("submitWorkflowCancellation"), "信审流程必须提供受控取消入口");
+assert.ok(adapter.includes("不会删除贷款申请、Action 结果或历史事件"), "取消流程必须明确保留业务事实和审计记录");
 assert.ok(adapter.includes("workflowStepFacts"), "信审流程必须展示关键业务结果而非原始响应");
 assert.ok(adapter.includes("WORKFLOW_SYSTEM_FIELDS"), "服务端生成字段不得要求业务人员手工填写");
 assert.ok(adapter.includes("verification_id") && adapter.includes("source_execution_id"), "后续 Action 应自动承接前序执行标识");
