@@ -35,7 +35,7 @@ assert.ok(html.includes('id="page-runtime"'), "应增加统一业务运行页面
 
 for (const route of [
   "/ontology/baseline", "/ontology/generate", "/ontology/versions/drafts",
-  "/ontology/git/status", "/postgres/schema", "/llm/test",
+  "/ontology/git/status", "/postgres/schema", "/postgres/data/", "/llm/test",
   "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
   "/workflows/personal-credit/summary", "/workflows/personal-credit/data-search",
   "/operations/summary",
@@ -66,6 +66,12 @@ assert.ok(adapter.includes("覆盖已填写字段"), "自动回填必须让用�
 assert.ok(adapter.includes("保留当前申请编号、提交时间和初始状态"), "历史资料复用不得覆盖当前业务事件身份");
 assert.ok(adapter.includes("data-prefill-source"), "数据库回填字段必须显示来源标记");
 assert.ok(adapter.includes(".workflow-form [hidden]{display:none!important}"), "可选业务分组默认必须真正隐藏");
+assert.ok(adapter.includes("openSourceDataBrowser"), "数据源管理必须提供现有数据查看入口");
+assert.ok(adapter.includes("loadSourceTableData"), "数据源预览必须读取受控 PostgreSQL 表数据接口");
+assert.ok(adapter.includes("sourceDataColumns"), "数据源预览必须按真实 Schema 展示字段");
+assert.ok(adapter.includes("sourceDataPage"), "数据源预览必须支持受控分页");
+assert.ok(adapter.includes("敏感字段已在接口出口脱敏"), "数据源预览必须说明敏感字段脱敏边界");
+assert.equal(adapter.includes("JSON.stringify(row"), false, "数据源预览不得将数据库行显示为 JSON");
 assert.ok(adapter.includes('id="instance-graph-svg"'), "实例图谱必须使用可交互 SVG 星图画布");
 assert.ok(adapter.includes("normalizeInstanceNode"), "实例图谱必须将真实图数据库节点转换为视图模型");
 assert.ok(adapter.includes("stepInstanceSimulation"), "实例图谱必须提供节点关系力导向布局");

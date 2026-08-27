@@ -79,6 +79,7 @@ curl -H "X-API-Key: <MVP_API_KEY>" http://localhost:8000/api/kg/stats
 
 - `GET /api/health`：检查 PostgreSQL 与 NebulaGraph
 - `GET /api/postgres/schema`：读取 PostgreSQL Schema
+- `GET /api/postgres/data/{table}`：通过服务端白名单校验读取指定业务表的脱敏分页预览
 - `POST /api/postgres/profile`：读取样本
 - `POST /api/ontology/generate`：调用 LLM 生成候选本体
 - `GET /api/ontology/baseline`：生成已批准的个人信审 `1.1.0` 确定性基线
@@ -141,4 +142,4 @@ PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
 ```
 
-前者执行257个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、数据库字段回填、未接功能边界和运行表格文本转义。
+前者执行257个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、数据库字段回填、数据源脱敏分页预览、未接功能边界和运行表格文本转义。
