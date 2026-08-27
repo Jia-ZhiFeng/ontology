@@ -39,7 +39,8 @@ for (const route of [
   "/kg/query", "/kg/sync", "/workflows/personal-credit/definition",
   "/workflows/personal-credit/summary", "/operations/summary",
   "/operations/alerts", "/operations/circuits", "/actions/outbox/status",
-  "/actions/outbox/alerts", "/replay",
+  "/actions/outbox/alerts", "/replay", "/ontology/version-events",
+  "/ontology/git/branches", "/ontology/git/tags",
 ]) assert.ok(adapter.includes(route), `后端适配缺少接口：${route}`);
 
 assert.ok(adapter.includes("proposalToOntology"), "应将后端本体转换为候选页面数据模型");
@@ -53,7 +54,16 @@ assert.equal(adapter.includes('id="runtime-payload"'), false, "工作流执行�
 assert.ok(adapter.includes("workflowDefinition"), "工作流表单必须读取后端工作流定义");
 assert.ok(adapter.includes("data-workflow-field"), "工作流执行必须使用字段化表单");
 assert.ok(adapter.includes("buildWorkflowPayload"), "字段化表单必须受控构造 Action 请求");
+assert.ok(adapter.includes("workflow-dashboard"), "信审流程必须提供申请队列与流程详情工作台");
+assert.ok(adapter.includes("workflowStepFacts"), "信审流程必须展示关键业务结果而非原始响应");
+assert.ok(adapter.includes("WORKFLOW_SYSTEM_FIELDS"), "服务端生成字段不得要求业务人员手工填写");
+assert.ok(adapter.includes("verification_id") && adapter.includes("source_execution_id"), "后续 Action 应自动承接前序执行标识");
 assert.ok(adapter.includes(".workflow-form [hidden]{display:none!important}"), "可选业务分组默认必须真正隐藏");
+assert.ok(adapter.includes("governance-stage-rail"), "版本治理必须展示草稿到发布的阶段路径");
+assert.ok(adapter.includes("governanceVersionActions"), "版本操作必须跟随真实状态显示");
+assert.ok(adapter.includes("governanceEventRow"), "版本治理必须显示发布与回滚动态");
+assert.ok(adapter.includes("review_failed"), "版本治理必须显式反馈审核门禁失败");
+assert.ok(adapter.includes("action==='rollback'"), "版本治理必须接入受控回滚动作");
 assert.ok(adapter.includes("trustedCell"), "运行表格必须显式区分可信控件与后端文本");
 assert.equal(adapter.includes("value.indexOf('<')"), false, "不得把含尖括号的后端文本直接当 HTML");
 assert.equal(html.includes("function tryTpl"), false, "不得保留提示词模板模拟试运行");
