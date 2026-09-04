@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-var API='http://localhost:8000/api';
+var API=(location.protocol==='file:'?'http://127.0.0.1:8000':location.protocol+'//'+(location.hostname||'127.0.0.1')+':8000')+'/api';
 var liveProposal=null;
 var liveAiProposal=null;
 var liveSchema={};
@@ -17,6 +17,9 @@ var workflowLoading=false;
 var workflowLookupRows=[];
 var sourcePreviewState={open:false,table:'',offset:0,limit:20,total:0};
 var sourcePreviewSerial=0;
+var liveAuthMode='anonymous';
+var liveSessionExpiresAt=null;
+var liveSessionPromise=null;
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function label(value){return value&&String(value).trim()||'—'}
@@ -26,7 +29,10 @@ function workflowStatusLabel(value){return WORKFLOW_STATUS_LABELS[value]||value|
 function workflowStatusTag(value){var ok=['COMPLETED','SUCCEEDED'].indexOf(value)>=0,bad=['FAILED'].indexOf(value)>=0,off=['CANCELLED','SKIPPED','PENDING'].indexOf(value)>=0;return '<span class="tag '+(ok?'ok':bad?'warn':off?'off':'info')+'">'+esc(workflowStatusLabel(value))+'</span>'}
 function formatRuntimeTime(value){if(!value)return '—';var date=new Date(value);if(Number.isNaN(date.getTime()))return label(value);return date.toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
 function requestId(prefix){return prefix+'-'+(globalThis.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now())}
-async function api(path,options){options=options||{};var headers=Object.assign({'Content-Type':'application/json'},options.headers||{}),token=sessionStorage.getItem('mvpApiKey');if(token)headers['X-API-Key']=token;var response=await fetch(API+path,Object.assign({},options,{headers:headers})),text=await response.text(),data=null;if(text){try{data=JSON.parse(text)}catch(e){throw new Error('服务返回了非 JSON 内容（HTTP '+response.status+'）')}}if(!response.ok){var detail=data&&data.detail;throw new Error(typeof detail==='string'?detail:(detail&&detail.message)||('请求失败（HTTP '+response.status+'）'))}return data}
+async function liveRequest(path,options){options=options||{};var headers=Object.assign({Accept:'application/json'},options.headers||{});if(options.body!=null)headers['Content-Type']='application/json';var response=await fetch(API+path,Object.assign({},options,{headers:headers,credentials:'include'})),text=await response.text(),data=null;if(text){try{data=JSON.parse(text)}catch(e){var formatError=new Error('服务返回了非 JSON 内容（HTTP '+response.status+'）');formatError.status=response.status;throw formatError}}if(!response.ok){var detail=data&&data.detail,error=new Error(typeof detail==='string'?detail:(detail&&detail.message)||('请求失败（HTTP '+response.status+'）'));error.status=response.status;error.detail=data;throw error}return data}
+async function establishLiveSession(){var session=await liveRequest('/auth/session',{method:'POST'}),checked=await liveRequest('/auth/check');liveAuthMode=checked&&checked.mode||session&&session.mode||'local_session';liveSessionExpiresAt=checked&&checked.expires_at||session&&session.expires_at||null;return checked}
+function ensureLiveSession(force){if(!force&&liveAuthMode==='local_session')return Promise.resolve({authenticated:true,mode:liveAuthMode,expires_at:liveSessionExpiresAt});if(!liveSessionPromise)liveSessionPromise=establishLiveSession().finally(function(){liveSessionPromise=null});return liveSessionPromise}
+async function api(path,options){try{return await liveRequest(path,options)}catch(error){if(error.status!==401||path==='/auth/session'||path==='/auth/check')throw error;try{await ensureLiveSession(true);return liveRequest(path,options)}catch(sessionError){var wrapped=new Error('本机安全会话已失效且自动重连失败：'+sessionError.message);wrapped.status=sessionError.status;throw wrapped}}}
 function body(value){return JSON.stringify(value)}
 function typeName(range){var map={string:'字符串',integer:'整数',number:'小数',boolean:'布尔',date:'日期',datetime:'日期时间'};return map[String(range||'string').toLowerCase()]||'字符串'}
 function rangeName(type){var map={'字符串':'string','整数':'integer','小数':'number','布尔':'boolean','日期':'date','日期时间':'datetime','枚举':'string'};return map[type]||'string'}
@@ -94,16 +100,15 @@ async function loadSchema(){
   return names;
 }
 
-/* 保留候选模型管理页面，只在顶部增加真实访问令牌。 */
+/* 保留候选模型管理页面，在本机自动建立 HttpOnly 安全会话。 */
 var candidateRenderModels=renderModels;
 renderModels=function(){
   candidateRenderModels();
   var pad=document.querySelector('#page-models .pad');if(!pad)return;
-  var card=document.createElement('div');card.className='card';card.style.padding='16px 18px';card.innerHTML='<div class="page-head" style="margin-bottom:0"><div><h2 style="font-size:15px">MVP 服务访问</h2><p>访问令牌只保存在当前浏览器会话，关闭会话后自动清除。</p></div><div class="sp"></div><input id="live-api-token" type="password" autocomplete="off" placeholder="MVP_API_KEY" style="width:280px" value="'+esc(sessionStorage.getItem('mvpApiKey')||'')+'"><button class="btn btn-primary" onclick="saveLiveToken()">保存并连接</button><button class="btn" onclick="clearLiveToken()">清除</button></div>';
+  var card=document.createElement('div');card.className='card';card.style.padding='16px 18px';card.innerHTML='<div class="page-head" style="margin-bottom:0"><div><h2 style="font-size:15px">MVP 本机安全会话</h2><p>打开工作台即自动连接；凭据位于 HttpOnly Cookie，前端脚本不可读取。</p></div><div class="sp"></div><span class="tag '+(liveAuthMode==='local_session'?'ok':'info')+'">'+(liveAuthMode==='local_session'?'已安全连接':'等待连接')+'</span><button class="btn btn-primary" onclick="reconnectLiveSession()">重新连接</button></div>';
   pad.insertBefore(card,pad.firstChild);
 };
-window.saveLiveToken=async function(){var value=document.getElementById('live-api-token').value.trim();if(!value)return toast('请填写访问令牌','err');sessionStorage.setItem('mvpApiKey',value);toast('访问令牌已保存，正在连接真实服务…','ok');try{await loadBackendOntology();refreshOperationsBadge()}catch(e){toast(e.message,'err')}};
-window.clearLiveToken=function(){sessionStorage.removeItem('mvpApiKey');var input=document.getElementById('live-api-token');if(input)input.value='';toast('当前会话令牌已清除','ok')};
+window.reconnectLiveSession=async function(){toast('正在重新建立本机安全会话…');try{await ensureLiveSession(true);await loadBackendOntology();refreshOperationsBadge();toast('本机安全会话已恢复','ok')}catch(e){toast(e.message,'err')}};
 
 /* 模型连接测试改用真实 /llm/test。 */
 var candidateDoProv=doProv;
@@ -324,7 +329,7 @@ window.replayOutbox=async function(id){var reason=prompt('重放原因（至少1
 
 function trustedCell(html){return {trustedHtml:html}}
 function simpleTable(rows,columns){return '<div class="runtime-table"><table class="tbl"><tr>'+columns.map(function(column){return '<th>'+esc(column[0])+'</th>'}).join('')+'</tr>'+(rows.length?rows.map(function(row){return '<tr>'+columns.map(function(column){var value=column[1](row);return '<td>'+(value&&typeof value==='object'&&typeof value.trustedHtml==='string'?value.trustedHtml:esc(value))+'</td>'}).join('')+'</tr>'}).join(''):'<tr><td colspan="'+columns.length+'" class="empty">暂无记录</td></tr>')+'</table></div>'}
-function showRuntimeError(error){var el=document.getElementById('runtime-body');if(el)el.innerHTML='<div class="warnbox">'+esc(error.message)+'</div><button class="btn" onclick="switchPage(\'models\')">前往配置访问令牌</button>'}
+function showRuntimeError(error){var el=document.getElementById('runtime-body');if(el)el.innerHTML='<div class="warnbox">'+esc(error.message)+'</div><button class="btn" onclick="reconnectLiveSession()">重新建立本机安全会话</button>'}
 async function refreshOperationsBadge(){var badge=document.getElementById('operationsBadge');if(!badge)return;try{var summary=await api('/operations/summary'),count=Number(summary.active||0);badge.textContent=count>99?'99+':String(count);badge.style.display=count?'inline-flex':'none'}catch(e){badge.style.display='none'}}
 
 var css=document.createElement('style');css.textContent=[
@@ -359,8 +364,8 @@ var css=document.createElement('style');css.textContent=[
 '@media(max-width:760px){.workflow-io-overview,.workflow-io-grid{grid-template-columns:1fr}.workflow-io-note{min-height:0}.workflow-io-row{grid-template-columns:minmax(105px,.75fr) minmax(0,1.25fr)}}'
 ].join('');document.head.appendChild(css);
 
-/* 启动时不展示候选演示本体；有令牌则直接加载真实本体。 */
+/* 启动时不展示候选演示本体；安全会话建立后直接加载真实本体。 */
 DB.ontologies=[{id:'personal-credit',name:'个人信审本体',code:'personal_credit',desc:'连接真实后端后加载。',tags:['个人信审'],status:'draft',version:'—',updatedAt:'—',owner:'MVP 后端',classes:[],entities:{},relations:[],actions:[],axioms:[],changes:[]}];state.ontId='personal-credit';state.selEnt=null;renderList();
-if(sessionStorage.getItem('mvpApiKey'))loadBackendOntology().catch(function(e){toast(e.message,'err')});
+sessionStorage.removeItem('mvpApiKey');ensureLiveSession(false).then(loadBackendOntology).catch(function(e){toast(e.status===403?'本机安全会话被拒绝，请从受信任的工作台地址访问。':e.status===503?'MVP 后端尚未配置本机会话签名密钥。':e.message,'err')});
 refreshOperationsBadge();
 })();

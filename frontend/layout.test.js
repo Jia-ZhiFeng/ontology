@@ -10,7 +10,7 @@ const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(ma
 assert.equal(inlineScripts.length, 1, "候选 HTML 原生脚本应保持单一入口");
 new vm.Script(inlineScripts[0], {filename: "candidate-ui.js"});
 new vm.Script(adapter, {filename: "live-backend.js"});
-assert.ok(html.includes('<script src="live-backend.js"></script>'), "候选页面应加载真实后端适配层");
+assert.ok(html.includes('<script src="live-backend.js?v=20260903-local-session"></script>'), "候选页面应加载带版本标识的真实后端适配层");
 assert.ok(html.includes("OntoStudio · 本体建模平台"), "应保留候选 HTML 标题");
 assert.ok(html.includes('id="sidebar"'), "应保留候选侧栏");
 assert.ok(html.includes('id="page-model"'), "应保留候选树形建模页面");
@@ -48,6 +48,8 @@ for (const route of [
 assert.ok(adapter.includes("proposalToOntology"), "应将后端本体转换为候选页面数据模型");
 assert.ok(adapter.includes("ontologyToProposal"), "应将候选编辑结果转换回后端本体");
 assert.ok(adapter.includes("candidateRenderModels"), "模型配置应扩展候选页面而不是覆盖页面");
+assert.ok(adapter.includes("/auth/session")&&adapter.includes("/auth/check")&&adapter.includes("credentials:'include'"), "建模工作台必须自动建立并携带本机安全会话");
+assert.ok(adapter.includes("sessionStorage.removeItem('mvpApiKey')")&&!adapter.includes('id="live-api-token"'), "建模工作台不得继续保留本机手工访问令牌输入");
 assert.ok(adapter.includes("candidateDrawTab"), "版本治理应扩展候选标签而不是覆盖建模页面");
 assert.equal(adapter.includes("renderList=refreshHome"), false, "不得整体替换候选本体列表");
 assert.equal(adapter.includes("renderModel=window"), false, "不得整体替换候选建模页面");

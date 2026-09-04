@@ -70,6 +70,33 @@ class ComposeRuntimeConfigTests(unittest.TestCase):
                 self.assertIn("restart: unless-stopped", service_block(service))
         self.assertIn('restart: "no"', service_block("nebula-init"))
 
+    def test_published_ports_are_loopback_only(self):
+        expected={
+            "postgres":"127.0.0.1:5432:5432",
+            "graphd":"127.0.0.1:9669:9669",
+            "backend":"127.0.0.1:8000:8000",
+            "frontend":"127.0.0.1:8080:80",
+        }
+        for service,mapping in expected.items():
+            with self.subTest(service=service):
+                self.assertIn(mapping,service_block(service))
+
+    def test_local_session_mode_is_explicit_and_anonymous_uat_stays_off(self):
+        backend=service_block("backend")
+        self.assertIn("MVP_AUTH_MODE: ${MVP_AUTH_MODE:-local_session}",backend)
+        self.assertIn(
+            "MVP_LOCAL_SESSION_TRUST_PROXY: ${MVP_LOCAL_SESSION_TRUST_PROXY:-true}",
+            backend,
+        )
+        self.assertIn(
+            "WORKBENCH_UNAUTHENTICATED: ${WORKBENCH_UNAUTHENTICATED:-false}",
+            backend,
+        )
+        self.assertIn(
+            "PERSONAL_CREDIT_AGENT_MODE: ${PERSONAL_CREDIT_AGENT_MODE:-legacy}",
+            backend,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

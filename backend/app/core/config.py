@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from .agent_runtime import parse_personal_credit_agent_mode
 load_dotenv()
 POSTGRES_HOST=os.getenv("POSTGRES_HOST","localhost")
 POSTGRES_PORT=int(os.getenv("POSTGRES_PORT","5432"))
@@ -11,8 +12,45 @@ NEBULA_PORT=int(os.getenv("NEBULA_PORT","9669"))
 NEBULA_USER=os.getenv("NEBULA_USER","root")
 NEBULA_PASSWORD=os.getenv("NEBULA_PASSWORD","nebula")
 NEBULA_SPACE=os.getenv("NEBULA_SPACE","credit_ontology")
-CORS_ORIGINS=os.getenv("CORS_ORIGINS","http://localhost:8080").split(",")
+CORS_ORIGINS=os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8080,http://127.0.0.1:8080,"
+    "http://localhost:4173,http://127.0.0.1:4173",
+)
+CORS_ORIGINS=[item.strip().rstrip("/") for item in CORS_ORIGINS.split(",") if item.strip()]
 MVP_API_KEY=os.getenv("MVP_API_KEY","").strip()
+MVP_AUTH_MODE=os.getenv("MVP_AUTH_MODE","api_key").strip().lower()
+if MVP_AUTH_MODE not in {"api_key","local_session"}:
+    MVP_AUTH_MODE="api_key"
+MVP_LOCAL_SESSION_SECRET=(
+    os.getenv("MVP_LOCAL_SESSION_SECRET","").strip() or MVP_API_KEY
+)
+MVP_LOCAL_SESSION_TTL_SECONDS=max(
+    60,min(int(os.getenv("MVP_LOCAL_SESSION_TTL_SECONDS","900")),3600)
+)
+MVP_LOCAL_SESSION_TRUST_PROXY=os.getenv(
+    "MVP_LOCAL_SESSION_TRUST_PROXY","false"
+).strip().lower() in {"1","true","yes","on"}
+MVP_LOCAL_SESSION_COOKIE_SECURE=os.getenv(
+    "MVP_LOCAL_SESSION_COOKIE_SECURE","false"
+).strip().lower() in {"1","true","yes","on"}
+MVP_LOCAL_SESSION_ALLOWED_ORIGINS=[
+    item.strip().rstrip("/")
+    for item in os.getenv(
+        "MVP_LOCAL_SESSION_ALLOWED_ORIGINS",",".join(CORS_ORIGINS)
+    ).split(",")
+    if item.strip()
+]
+LLM_CONFIG_ENCRYPTION_KEY=os.getenv("LLM_CONFIG_ENCRYPTION_KEY","").strip() or MVP_API_KEY
+LLM_REQUEST_TIMEOUT_SECONDS=max(
+    5.0,min(float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS","60")),300.0)
+)
+WORKBENCH_UNAUTHENTICATED=os.getenv(
+    "WORKBENCH_UNAUTHENTICATED","false"
+).strip().lower() in {"1","true","yes","on"}
+PERSONAL_CREDIT_AGENT_MODE=parse_personal_credit_agent_mode(
+    os.getenv("PERSONAL_CREDIT_AGENT_MODE","legacy")
+).value
 MVP_ACTION_ACTOR_ID=os.getenv("MVP_ACTION_ACTOR_ID","mvp-local-operator").strip()
 MVP_ACTION_ACTOR_ROLE=os.getenv("MVP_ACTION_ACTOR_ROLE","风控专员").strip()
 MVP_CREATE_APPLICATION_ACTOR_ID=os.getenv(

@@ -1,0 +1,328 @@
+{
+  "contract_digests": {
+    "agent_run_request_schema": "0a5c19c0a389312809904f930d9e1c17e45d7af225c0a16528452c1c2a433ede",
+    "action_request_schemas": "175880b67d5876df152d8f84f1d11e1057c264f05690e162725c8d8e9b13a719",
+    "action_tbox_and_security": "1af775c8c477f82b6c23b36ad51d831e174702c6547fa7da34a504062f8054d5",
+    "action_runtime_design": "bf77dc2a2e44df8d75f9f8ab85db91f66171c8772c4983b4e196131792bf901a",
+    "action_registry_bindings": "3d320cf2d618d65825ec84b4d037463e93c1a08a50b491192ead66d6bf7b79f0"
+  },
+  "agent": {
+    "run_request_fields": [
+      "application_id",
+      "instruction",
+      "ontology_version",
+      "execute",
+      "max_steps",
+      "conversation_id"
+    ],
+    "run_request_required": ["application_id", "instruction"],
+    "run_request_defaults": {
+      "ontology_version": null,
+      "execute": true,
+      "max_steps": 1,
+      "conversation_id": null
+    },
+    "read_only_tools": [
+      "inspect_case_readiness",
+      "preview_risk_assessment",
+      "generate_verification_questions",
+      "generate_decision_support"
+    ],
+    "action_run_response": {
+      "top_level_fields": [
+        "answer",
+        "context_window",
+        "conversation_id",
+        "degraded",
+        "executed",
+        "execution_summary",
+        "executions",
+        "final_answer",
+        "model_calls",
+        "plan",
+        "proposed_actions",
+        "reason_code",
+        "response_type",
+        "result",
+        "synthesis",
+        "trace",
+        "turn_index"
+      ],
+      "plan_fields": [
+        "application_id",
+        "degradation_reason",
+        "degraded",
+        "executable",
+        "execution_semantics",
+        "final_approval",
+        "goal",
+        "max_steps",
+        "missing_evidence",
+        "model_calls",
+        "ontology_version",
+        "overall_status",
+        "planner_mode",
+        "read_only",
+        "readiness",
+        "reason",
+        "requires_confirmation",
+        "selected_tool",
+        "status",
+        "steps",
+        "suggested_write_action",
+        "tool_label"
+      ],
+      "execution_fields": [
+        "answer",
+        "executed",
+        "result",
+        "status",
+        "step_id",
+        "tool_label",
+        "tool_name"
+      ],
+      "execution_summary_fields": [
+        "blocked",
+        "executed",
+        "failed",
+        "planned",
+        "status"
+      ],
+      "synthesis_fields": [
+        "degraded",
+        "mode",
+        "model_called",
+        "quality_gate",
+        "reason_code",
+        "status"
+      ],
+      "trace_stages": ["planner", "readiness", "action", "synthesis"]
+    },
+    "legacy_risk_projection": {
+      "response_type": "ACTION_RUN",
+      "executed": true,
+      "plan": {
+        "planner_mode": "deterministic",
+        "selected_tool": "preview_risk_assessment",
+        "status": "READY",
+        "overall_status": "READY",
+        "read_only": true,
+        "requires_confirmation": false,
+        "final_approval": false,
+        "suggested_write_action": "generate_risk_assessment",
+        "step_count": 1
+      },
+      "execution_summary": {
+        "planned": 1,
+        "executed": 1,
+        "blocked": 0,
+        "failed": 0,
+        "status": "COMPLETED"
+      },
+      "executions": [
+        {
+          "tool_name": "preview_risk_assessment",
+          "status": "EXECUTED",
+          "executed": true
+        }
+      ],
+      "proposed_actions": [
+        {
+          "action_name": "generate_risk_assessment",
+          "source_step_id": "step-1",
+          "requires_confirmation": true,
+          "auto_executable": false
+        }
+      ],
+      "synthesis": {
+        "mode": "deterministic",
+        "status": "COMPLETED",
+        "reason_code": null,
+        "degraded": false,
+        "quality_gate": "NOT_REQUIRED",
+        "model_called": false
+      },
+      "trace": [
+        {"stage": "planner", "status": "COMPLETED", "source": "local_router"},
+        {"stage": "readiness", "status": "COMPLETED", "source": "backend"},
+        {
+          "stage": "action",
+          "status": "EXECUTED",
+          "source": "backend_read_only",
+          "tool_name": "preview_risk_assessment"
+        },
+        {"stage": "synthesis", "status": "COMPLETED", "source": "deterministic"}
+      ]
+    },
+    "route_additive_fields": ["agent_mode"],
+    "response_types": ["CHAT", "NO_ACTION", "ACTION_RUN"]
+  },
+  "actions": {
+    "names": [
+      "create_loan_application",
+      "request_credit_report",
+      "request_fraud_report",
+      "generate_risk_assessment",
+      "create_phone_verification_task",
+      "record_phone_verification",
+      "trigger_manual_review",
+      "record_decision_recommendation"
+    ],
+    "request_fields": {
+      "create_loan_application": [
+        "application_id",
+        "application",
+        "borrower",
+        "vehicle",
+        "dealer",
+        "guarantor",
+        "co_borrower",
+        "request_id"
+      ],
+      "request_credit_report": [
+        "application_id",
+        "subject_id_number",
+        "authorization_reference",
+        "query_purpose",
+        "request_id"
+      ],
+      "request_fraud_report": ["application_id", "request_id"],
+      "generate_risk_assessment": [
+        "application_id",
+        "assessment_version",
+        "data_snapshot_policy",
+        "request_id"
+      ],
+      "create_phone_verification_task": [
+        "application_id",
+        "verification_round",
+        "trigger_reason",
+        "request_id"
+      ],
+      "record_phone_verification": [
+        "verification_id",
+        "callback_id",
+        "verifier_identity",
+        "call_time",
+        "duration_seconds",
+        "conclusion",
+        "doubts",
+        "recording_file_id"
+      ],
+      "trigger_manual_review": [
+        "application_id",
+        "review_reason",
+        "source_execution_id",
+        "request_id"
+      ],
+      "record_decision_recommendation": [
+        "application_id",
+        "recommendation_version",
+        "approver_id",
+        "approval_assertion",
+        "request_id"
+      ]
+    },
+    "idempotency_fields": {
+      "create_loan_application": ["application_id"],
+      "request_credit_report": ["application_id", "subject_id_number"],
+      "request_fraud_report": ["application_id"],
+      "generate_risk_assessment": ["application_id", "assessment_version"],
+      "create_phone_verification_task": ["application_id", "verification_round"],
+      "record_phone_verification": ["verification_id"],
+      "trigger_manual_review": ["application_id", "review_reason"],
+      "record_decision_recommendation": ["application_id", "recommendation_version"]
+    },
+    "response_fields": {
+      "create_loan_application": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "application_id",
+        "created_relations"
+      ],
+      "request_credit_report": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "report_id",
+        "provider_request_id"
+      ],
+      "request_fraud_report": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "fraud_report_id",
+        "provider_request_id", "association_risk_summary"
+      ],
+      "generate_risk_assessment": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "assessment_id",
+        "risk_level", "pd_value", "evidence_summary"
+      ],
+      "create_phone_verification_task": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "verification_id",
+        "question_count", "dispatch_status"
+      ],
+      "record_phone_verification": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "verification_id",
+        "record_status"
+      ],
+      "trigger_manual_review": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "application_id",
+        "application_status", "review_evidence_reference"
+      ],
+      "record_decision_recommendation": [
+        "execution_id", "action_name", "status", "ontology_version",
+        "result", "warnings", "audit_reference", "application_id",
+        "recommended_decision", "decision_authority", "evidence_reference"
+      ]
+    },
+    "required_step_kinds": ["authorize", "idempotency", "verify", "audit"],
+    "approval_required": {
+      "create_loan_application": false,
+      "request_credit_report": false,
+      "request_fraud_report": false,
+      "generate_risk_assessment": false,
+      "create_phone_verification_task": false,
+      "record_phone_verification": false,
+      "trigger_manual_review": false,
+      "record_decision_recommendation": true
+    },
+    "archetype_count": 7
+  },
+  "workflow": {
+    "version": "personal-credit-workflow-v1",
+    "statuses": [
+      "WAITING_INPUT", "RUNNING", "FAILED", "COMPLETED", "CANCELLED"
+    ],
+    "step_statuses": [
+      "PENDING", "READY", "RUNNING", "WAITING", "COMPLETED", "FAILED",
+      "SKIPPED"
+    ],
+    "actions": [
+      "create_loan_application",
+      "request_credit_report",
+      "request_fraud_report",
+      "generate_risk_assessment",
+      "create_phone_verification_task",
+      "record_phone_verification",
+      "trigger_manual_review",
+      "record_decision_recommendation"
+    ],
+    "dependencies": {
+      "create_loan_application": [],
+      "request_credit_report": ["create_loan_application"],
+      "request_fraud_report": ["create_loan_application"],
+      "generate_risk_assessment": [
+        "request_credit_report",
+        "request_fraud_report"
+      ],
+      "create_phone_verification_task": ["generate_risk_assessment"],
+      "record_phone_verification": ["create_phone_verification_task"],
+      "trigger_manual_review": ["record_phone_verification"],
+      "record_decision_recommendation": [
+        "record_phone_verification",
+        "trigger_manual_review"
+      ]
+    },
+    "optional_actions": ["trigger_manual_review"]
+  }
+}

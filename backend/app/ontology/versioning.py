@@ -4,7 +4,7 @@ import re
 from .audit import proposal_digest
 from .axiom_executor import execute_axioms
 from .data_quality import validate_catalog_data_quality
-from .mapping import ID_KEYS,build_mapping_contract,prepare_mapped_entities
+from .mapping import build_mapping_contract,prepare_mapped_entities
 from .models import OntologyProposal
 from .validator import validate
 
@@ -190,23 +190,25 @@ def review_release_candidate(
         {"missing":missing_relation_sources,"source_count":len(relation_sources)},
     )
 
-    mapping_error=None; mapping_issues=[]; mapped_tables=[]
+    mapping_error=None; mapping_issues=[]; mapped_tables=[]; mapped_objects=set()
     try:
         contract=build_mapping_contract(proposal)
         _,mapping_issues=prepare_mapped_entities(profile,contract)
         mapped_tables=sorted(contract["table_objects"])
+        mapped_objects=set(contract["table_objects"].values())
     except Exception as exc:
         mapping_error=str(exc)
-    missing_core_tables=sorted(set(ID_KEYS)-set(mapped_tables))
-    mapping_valid=not mapping_error and not mapping_issues and not missing_core_tables
+    expected_objects={item.name for item in proposal.object_types}
+    missing_core_objects=sorted(expected_objects-mapped_objects)
+    mapping_valid=not mapping_error and not mapping_issues and not missing_core_objects
     add(
         "abox.mapping_preflight","ABox–TBox 映射预检",mapping_valid,
-        "9 张核心业务表可无歧义映射到候选 TBox" if mapping_valid else "候选版本无法安全承接当前 ABox 映射",
+        "全部核心 ObjectType 可无歧义映射到候选 TBox" if mapping_valid else "候选版本无法安全承接当前 ABox 映射",
         {
             "error":mapping_error,
             "issues":mapping_issues,
             "mapped_tables":mapped_tables,
-            "missing_core_tables":missing_core_tables,
+            "missing_core_object_types":missing_core_objects,
         },
     )
 

@@ -246,7 +246,7 @@ class GenerateRiskAssessmentActionService:
             postgres_service
         )
         self.functions = function_adapter or PersonalCreditFunctionDataAdapter(
-            postgres_service, nebula_factory
+            postgres_service, nebula_factory, proposal=proposal
         )
         self.outbox = outbox_repository or PostgresActionOutboxRepository(
             postgres_service

@@ -10,19 +10,6 @@ MAPPING_VERSION = "personal-credit-abox-tbox-mapping-2.0"
 VID_SCHEME = "typed-abox-vid-v1"
 EDGE_RANK_SCHEME = "relation-kind-sha256-v1"
 
-ID_KEYS = {
-    "natural_person": "id_number",
-    "dealer": "credit_code",
-    "vehicle": "vin",
-    "loan_application": "application_id",
-    "credit_report": "report_id",
-    "external_debt": "debt_id",
-    "risk_assessment_report": "assessment_id",
-    "anti_fraud_report": "fraud_report_id",
-    "phone_verification_record": "verification_id",
-}
-
-
 def object_type_vid(name: str) -> str:
     return f"tbox:ObjectType:{name}"
 
@@ -48,6 +35,7 @@ def relation_rank(kind: str) -> int:
 def build_mapping_contract(proposal: OntologyProposal) -> dict:
     table_objects = {}
     property_mappings = {}
+    id_keys = {}
     for prop in proposal.properties:
         if not prop.source_table or not prop.source_column:
             continue
@@ -62,6 +50,12 @@ def build_mapping_contract(proposal: OntologyProposal) -> dict:
             "required": prop.required,
             "required_when": prop.required_when,
         }
+        if prop.business_key:
+            existing_key = id_keys.setdefault(prop.source_table, prop.source_column)
+            if existing_key != prop.source_column:
+                raise ValueError(
+                    f"同一数据表声明了多个 ABox 主键：{prop.source_table}"
+                )
 
     excluded = {}
     for item in proposal.metadata.get("excluded_database_fields", []):
@@ -78,7 +72,7 @@ def build_mapping_contract(proposal: OntologyProposal) -> dict:
             "link_type_vid": link_type_vid(relation.source, relation.name, relation.target),
         }
 
-    missing_id_tables = sorted(set(table_objects) - set(ID_KEYS))
+    missing_id_tables = sorted(set(table_objects) - set(id_keys))
     if missing_id_tables:
         raise ValueError(f"缺少 ABox 主键映射：{', '.join(missing_id_tables)}")
 
@@ -89,7 +83,7 @@ def build_mapping_contract(proposal: OntologyProposal) -> dict:
         "property_mappings": property_mappings,
         "excluded_fields": excluded,
         "relations": relations,
-        "id_keys": {table: ID_KEYS[table] for table in table_objects},
+        "id_keys": {table: id_keys[table] for table in table_objects},
         "vid_scheme": VID_SCHEME,
         "edge_rank_scheme": EDGE_RANK_SCHEME,
     }

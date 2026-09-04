@@ -8,6 +8,7 @@ from app.action import (
     FunctionDataAdapterError,
     PersonalCreditFunctionDataAdapter,
 )
+from app.ontology.baseline import build_personal_credit_baseline
 
 
 class FakeCursor:
@@ -32,20 +33,23 @@ class FakeCursor:
                 "snapshot_id": "200:200:",
                 "snapshot_started_at": datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc),
             }
-        if "FROM public.loan_application AS application" in self.current:
+        if (
+            'FROM "public"."loan_application" AS "application"' in self.current
+            or 'FROM "public"."credit_case" AS "application"' in self.current
+        ):
             return self.dataset.get("base")
-        if "FROM public.credit_report" in self.current:
+        if 'FROM "public"."credit_report"' in self.current:
             return self.dataset.get("credit_report")
-        if "FROM public.anti_fraud_report" in self.current:
+        if 'FROM "public"."anti_fraud_report"' in self.current:
             return self.dataset.get("anti_fraud_report")
-        if "FROM public.risk_assessment_report" in self.current:
+        if 'FROM "public"."risk_assessment_report"' in self.current:
             return self.dataset.get("risk_assessment")
-        if "FROM public.phone_verification_record" in self.current:
+        if 'FROM "public"."phone_verification_record"' in self.current:
             return self.dataset.get("phone_verification")
         raise AssertionError(f"unexpected fetchone: {self.current}")
 
     def fetchall(self):
-        if "FROM public.external_debt" in self.current:
+        if 'FROM "public"."external_debt"' in self.current:
             return self.dataset.get("external_debts", [])
         raise AssertionError(f"unexpected fetchall: {self.current}")
 
@@ -157,10 +161,16 @@ def dataset(**overrides):
 
 
 class FunctionDataAdapterTests(unittest.TestCase):
-    def make_adapter(self, values=None, *, truncated=False):
+    def make_adapter(self, values=None, *, truncated=False, proposal=None):
         postgres = FakePostgres(values or dataset())
         graph = FakeNebula(truncated=truncated)
-        return PersonalCreditFunctionDataAdapter(postgres, lambda: graph), postgres, graph
+        return (
+            PersonalCreditFunctionDataAdapter(
+                postgres, lambda: graph, proposal=proposal
+            ),
+            postgres,
+            graph,
+        )
 
     def test_postgres_context_uses_one_minimal_read_only_snapshot(self):
         adapter, postgres, _graph = self.make_adapter()
@@ -168,10 +178,31 @@ class FunctionDataAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.snapshot_id, "200:200:")
         self.assertEqual(snapshot.borrower["monthly_income"], Decimal("25000"))
         self.assertEqual(snapshot.external_debts[0]["monthly_payment"], Decimal("3200"))
+        self.assertEqual(snapshot.data_binding_version, "1.1.0")
+        self.assertEqual(len(snapshot.data_binding_digest), 64)
         self.assertEqual(postgres.connection_count, 1)
         statements = [statement for statement, _params in postgres.cursor.statements]
         self.assertIn("REPEATABLE READ, READ ONLY", statements[0])
         self.assertFalse(any("SELECT *" in statement.upper() for statement in statements))
+
+    def test_snapshot_query_uses_versioned_ontology_physical_binding(self):
+        proposal = build_personal_credit_baseline().model_copy(deep=True)
+        proposal.version = "1.2.0"
+        for prop in proposal.properties:
+            if prop.domain == "LoanApplication":
+                prop.source_table = "credit_case"
+            if prop.domain == "LoanApplication" and prop.name == "loan_amount":
+                prop.source_column = "requested_amount"
+        adapter, postgres, _graph = self.make_adapter(proposal=proposal)
+        snapshot = adapter.load_postgres_snapshot("APP20260801000001")
+        sql = " ".join(
+            statement for statement, _parameters in postgres.cursor.statements
+        )
+        self.assertIn('FROM "public"."credit_case" AS "application"', sql)
+        self.assertIn(
+            '"application"."requested_amount" AS "loan_amount"', sql
+        )
+        self.assertEqual(snapshot.data_binding_version, "1.2.0")
 
     def test_execute_all_runs_every_function_without_business_write(self):
         adapter, postgres, graph = self.make_adapter()
@@ -271,6 +302,44 @@ class FunctionDataAdapterTests(unittest.TestCase):
         self.assertFalse(lineage["missing_sources"])
         self.assertEqual(postgres.connection_count, 1)
         self.assertFalse(graph.closed)
+
+    def test_readonly_actions_reuse_one_caller_owned_snapshot(self):
+        adapter, postgres, _graph = self.make_adapter()
+        snapshot = adapter.load_postgres_snapshot("APP20260801000001")
+
+        risk = adapter.execute_risk_assessment(
+            "APP20260801000001",
+            ontology_version="1.1.0",
+            snapshot=snapshot,
+        )
+        questions = adapter.execute_phone_questions(
+            "APP20260801000001",
+            ontology_version="1.1.0",
+            snapshot=snapshot,
+        )
+        decision = adapter.execute_decision_support(
+            "APP20260801000001",
+            ontology_version="1.1.0",
+            snapshot=snapshot,
+        )
+
+        self.assertEqual(postgres.connection_count, 1)
+        self.assertEqual(risk["postgres_snapshot_id"], snapshot.snapshot_id)
+        self.assertEqual(questions["postgres_snapshot_id"], snapshot.snapshot_id)
+        self.assertEqual(decision["postgres_snapshot_id"], snapshot.snapshot_id)
+
+    def test_caller_owned_snapshot_must_match_application(self):
+        adapter, postgres, _graph = self.make_adapter()
+        snapshot = adapter.load_postgres_snapshot("APP20260801000001")
+
+        with self.assertRaisesRegex(FunctionDataAdapterError, "快照.*不匹配"):
+            adapter.execute_risk_assessment(
+                "APP-DIFFERENT",
+                ontology_version="1.1.0",
+                snapshot=snapshot,
+            )
+
+        self.assertEqual(postgres.connection_count, 1)
 
     def test_graph_query_is_closed_and_uses_typed_borrower_seed(self):
         adapter, _postgres, graph = self.make_adapter()

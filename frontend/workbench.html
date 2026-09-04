@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="个人汽车信贷日常业务操作模拟工作台">
+  <title>CREDIT / FLOW · 信审业务工作台</title>
+  <link rel="stylesheet" href="workbench.css?v=20260903-local-session">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="workbench.html"><span class="brand-cube">CF</span><span><b>CREDIT / FLOW</b><small>个人汽车信贷业务工作台</small></span></a>
+    <div class="runtime-state" id="workbench-connection-state"><i></i><span>正在建立本机安全会话</span><em>自动连接</em></div>
+    <div class="top-actions"><button id="global-refresh" class="text-button" type="button">刷新数据</button><a href="index.html" class="outline-link">本体建模后台</a></div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <nav>
+        <span class="nav-label">日常工作</span>
+        <button class="nav-item active" data-view="dashboard"><i>01</i><span>工作台</span><em id="nav-active-count">0</em></button>
+        <button class="nav-item" data-view="new"><i>02</i><span>新申请进件</span></button>
+        <button class="nav-item" data-view="cases"><i>03</i><span>申请处理</span></button>
+        <button class="nav-item" data-view="completed"><i>04</i><span>已完成业务</span></button>
+        <span class="nav-label secondary">辅助入口</span>
+        <button class="nav-item" id="open-agent-nav"><i>AI</i><span>业务 Agent</span><b class="agent-pulse"></b></button>
+      </nav>
+      <div class="sandbox-note"><span>UAT SANDBOX</span><b>模拟业务操作环境</b><p>所有外部查询使用沙箱适配器，不连接正式征信、反欺诈或电核系统。</p></div>
+    </aside>
+
+    <main class="main-content">
+      <section class="page-heading">
+        <div><span class="kicker">DAILY OPERATIONS</span><h1 id="page-title">信审工作台</h1><p id="page-description">处理今天的申请、待办和异常业务。</p></div>
+        <button id="new-case-button" class="primary-button" type="button"><span>＋</span>录入新申请</button>
+      </section>
+
+      <section id="dashboard-view" class="view active">
+        <div class="metric-grid">
+          <article class="metric-card blue"><span>进行中申请</span><b id="metric-active">—</b><small>需要继续处理</small></article>
+          <article class="metric-card lime"><span>当前可办任务</span><b id="metric-ready">—</b><small>前置条件已满足</small></article>
+          <article class="metric-card"><span>今日已完成</span><b id="metric-completed">—</b><small>流程已完整收口</small></article>
+          <article class="metric-card warn"><span>异常申请</span><b id="metric-failed">—</b><small>需要人工排查</small></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="work-card task-card">
+            <header class="card-heading"><div><span class="kicker">MY QUEUE</span><h2>当前待办</h2></div><button class="text-button" data-view-link="cases" type="button">查看全部</button></header>
+            <div id="priority-queue" class="priority-queue"><div class="loading-state"><i></i><span>正在读取业务队列…</span></div></div>
+          </section>
+          <section class="work-card process-card">
+            <header class="card-heading"><div><span class="kicker">PROCESS MAP</span><h2>标准信审流程</h2></div><span class="tag">8 个业务动作</span></header>
+            <div id="process-map" class="process-map"></div>
+            <div class="process-foot"><span><i class="done"></i>已完成</span><span><i class="ready"></i>当前可办</span><span><i></i>等待前置</span></div>
+          </section>
+        </div>
+
+        <section class="work-card recent-card">
+          <header class="card-heading"><div><span class="kicker">RECENT CASES</span><h2>最近处理的申请</h2></div><div class="table-legend"><span class="live-dot"></span>实时流程状态</div></header>
+          <div class="table-wrap"><table><thead><tr><th>申请编号</th><th>当前业务环节</th><th>处理进度</th><th>业务状态</th><th>更新时间</th><th></th></tr></thead><tbody id="recent-cases"><tr><td colspan="6"><div class="loading-state"><i></i><span>正在读取申请…</span></div></td></tr></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="cases-view" class="view">
+        <section class="work-card cases-card">
+          <header class="card-heading cases-heading"><div><span class="kicker">APPLICATION QUEUE</span><h2>申请处理队列</h2></div><div class="filter-tabs" role="tablist"><button class="active" data-case-filter="active" type="button">待处理</button><button data-case-filter="all" type="button">全部</button><button data-case-filter="failed" type="button">异常</button></div></header>
+          <div id="case-list" class="case-list"></div>
+        </section>
+      </section>
+
+      <section id="completed-view" class="view">
+        <section class="work-card cases-card"><header class="card-heading"><div><span class="kicker">COMPLETED</span><h2>已完成业务</h2></div><span class="tag">结果只作为决策建议</span></header><div id="completed-list" class="case-list"></div></section>
+      </section>
+
+      <section id="case-detail-view" class="view">
+        <button id="back-to-cases" class="back-button" type="button">← 返回申请队列</button>
+        <div id="case-detail"></div>
+      </section>
+    </main>
+
+    <aside id="agent-dock" class="agent-dock">
+      <header><div class="agent-avatar">AI</div><div><b>目标驱动业务 Agent</b><small>按需调用最短只读能力路径</small></div><button id="close-agent" type="button" aria-label="关闭业务 Agent">×</button></header>
+      <div id="agent-context" class="agent-context"><span>当前上下文</span><b>工作台全局</b><small>可询问待办、流程和异常</small></div>
+      <div id="agent-messages" class="agent-messages">
+        <article class="agent-message"><span>AI</span><div><p>选中一笔申请后，我可以只生成你需要的结果，不要求走完整闭环。模型只会选择后端白名单内的只读工具。</p><div class="agent-suggestions"><button type="button" data-agent-prompt="只生成风险评估预览">风险评估</button><button type="button" data-agent-prompt="根据已有信息生成电核问题">电核问题</button><button type="button" data-agent-prompt="根据当前完整证据生成信审决策建议">决策建议</button></div></div></article>
+      </div>
+      <footer><div class="agent-model-row"><span id="agent-model-status">正在建立本机安全会话；模型由砺信 Agent 模型管理统一配置</span><a id="agent-model-settings" href="credit-review.html#models">打开模型管理</a></div><label for="agent-input">描述本次业务目标（不要粘贴证件号、电话、金额或报告正文）</label><div><textarea id="agent-input" rows="2" maxlength="500" placeholder="例如：只根据已有信息生成电核问题"></textarea><button id="agent-send" type="button">运行</button></div><small>Agent 仅执行只读 Function；写入报告、派发任务和最终审批均不自动执行</small></footer>
+    </aside>
+  </div>
+
+  <div id="modal-root" class="modal-root" hidden></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script src="workbench.js?v=20260903-local-session"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@ services:
       POSTGRES_DB: credit_ontology
       POSTGRES_USER: credit
       POSTGRES_PASSWORD: credit123
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/credit_ontology_seed.sql:/docker-entrypoint-initdb.d/01_seed.sql:ro
@@ -50,7 +50,7 @@ services:
     depends_on:
       metad0: {condition: service_healthy}
       storaged0: {condition: service_healthy}
-    ports: ["9669:9669"]
+    ports: ["127.0.0.1:9669:9669"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://graphd:19669/status"]
       interval: 5s
@@ -113,11 +113,19 @@ services:
     build: ./backend
     container_name: credit-mvp-backend
     env_file: .env
+    environment:
+      # Local browser sessions remove manual token entry without making the API
+      # anonymous. Proxy trust is safe here because every published port below
+      # is bound to the host loopback interface.
+      MVP_AUTH_MODE: ${MVP_AUTH_MODE:-local_session}
+      MVP_LOCAL_SESSION_TRUST_PROXY: ${MVP_LOCAL_SESSION_TRUST_PROXY:-true}
+      WORKBENCH_UNAUTHENTICATED: ${WORKBENCH_UNAUTHENTICATED:-false}
+      PERSONAL_CREDIT_AGENT_MODE: ${PERSONAL_CREDIT_AGENT_MODE:-legacy}
     depends_on:
       postgres: {condition: service_healthy}
       graphd: {condition: service_healthy}
       nebula-init: {condition: service_completed_successfully}
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://localhost:8000/api/health',timeout=3)); assert data.get('status')=='ok'"]
       interval: 10s
@@ -131,7 +139,7 @@ services:
     container_name: credit-mvp-frontend
     depends_on:
       backend: {condition: service_healthy}
-    ports: ["8080:80"]
+    ports: ["127.0.0.1:8080:80"]
     volumes: ["./frontend:/usr/share/nginx/html:ro"]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]

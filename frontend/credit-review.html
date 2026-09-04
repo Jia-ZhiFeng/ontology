@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="连接 MVP 后端的个人信审智能 Agent 工作台">
+  <title>砺信 Agent · 个人信审智能工作台</title>
+  <link rel="stylesheet" href="credit-review.css?v=9">
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 13h5"/></symbol>
+    <symbol id="i-run" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5M8 17h7"/></symbol>
+    <symbol id="i-nodes" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="m8.3 7 7.2-.2M7.5 8l3.3 7.7M16.8 9l-3.4 6.8"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5zM18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 2.8 7.8 7 9.5 4.2-1.7 7-5 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h5"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 8.3A7 7 0 0 1 18.5 9M17.8 15.7A7 7 0 0 1 5.5 15"/></symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark"><i></i><i></i><i></i></span><span><b>砺信 Agent</b><small>CREDIT INTELLIGENCE</small></span></div>
+      <button class="new-task" id="new-task" type="button"><svg><use href="#i-plus"/></svg>新建 Agent 任务<kbd>⌘K</kbd></button>
+
+      <nav class="main-nav">
+        <span class="nav-label">工作区</span>
+        <button class="nav-item active" type="button" data-view="chat"><svg><use href="#i-chat"/></svg><span>对话工作台</span></button>
+        <button class="nav-item" type="button" data-view="models"><svg><use href="#i-spark"/></svg><span>模型管理</span><em id="model-count-badge">0</em></button>
+        <button class="nav-item" type="button" data-view="runs"><svg><use href="#i-run"/></svg><span>任务运行</span><em id="run-count-badge">0</em></button>
+        <button class="nav-item" type="button" data-view="catalog"><svg><use href="#i-box"/></svg><span>Action 目录</span></button>
+        <button class="nav-item" type="button" data-view="knowledge"><svg><use href="#i-nodes"/></svg><span>策略与知识</span></button>
+      </nav>
+
+      <section class="sessions">
+        <div class="section-label"><span>最近任务</span><button type="button"><svg><use href="#i-search"/></svg></button></div>
+        <div id="recent-runs"><div class="sidebar-empty">连接后显示真实运行记录</div></div>
+      </section>
+
+      <div class="sidebar-bottom">
+        <div class="frontend-notice" id="backend-notice"><span id="backend-badge">CONNECTING</span><b id="backend-title">正在连接 MVP 后端</b><p id="backend-copy">读取案件、Agent 工具和工作流定义…</p></div>
+        <div class="user-row"><span>操</span><span><b>当前操作员</b><small>权限由 MVP 后端控制</small></span><svg><use href="#i-more"/></svg></div>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobile-menu" type="button" aria-label="打开导航"><i></i><i></i><i></i></button>
+        <div class="page-title"><span class="live-dot"></span><span><b>信审 Agent 工作台</b><small>多轮对话 · 自主规划 · Action 编排</small></span></div>
+        <div class="top-actions">
+          <button class="case-context" id="case-context" type="button"><span>当前业务上下文</span><b>正在读取申请…</b><svg><use href="#i-chevron"/></svg></button>
+          <button class="connection-button" id="connection-button" type="button"><span class="connection-light"></span><span><small>MVP Backend</small><b id="connection-label">连接中</b></span></button>
+        </div>
+      </header>
+
+      <main class="agent-layout view-panel" data-view-panel="chat">
+        <section class="conversation">
+          <header class="conversation-head">
+            <div><span class="agent-avatar"><svg><use href="#i-spark"/></svg></span><span><b>Personal Credit Agent</b><small id="agent-mode-copy"><i></i>等待后端连接</small></span></div>
+            <div><span class="mode-chip conversation-context-chip" id="conversation-state-chip" data-state="new">CONTEXT · NEW</span><button type="button" id="conversation-more" aria-label="会话操作"><svg><use href="#i-more"/></svg></button></div>
+          </header>
+
+          <div class="chat" id="chat">
+            <article class="message agent-message intro-message">
+              <span class="avatar"><svg><use href="#i-spark"/></svg></span>
+              <div class="message-body"><div class="message-meta"><b>信审 Agent</b><span>现在</span></div><div class="bubble"><p>连接 MVP 后端后，可以直接和我连续对话。上下文明确时我会拆解 Query 并调用白名单 Action；需要补充信息时只会自然追问，不会启动任务。</p><div class="ability-row"><span><svg><use href="#i-chat"/></svg>多轮记忆</span><span><svg><use href="#i-search"/></svg>Query 拆解</span><span><svg><use href="#i-run"/></svg>真实执行</span><span><svg><use href="#i-shield"/></svg>权限门禁</span></div></div></div>
+            </article>
+          </div>
+
+          <div class="quick-prompts" id="quick-prompts"><span>试试这样问</span><button type="button" data-prompt="评估这笔申请的综合风险并解释主要因素">预览综合风险</button><button type="button" data-prompt="根据当前风险证据生成电核问题">生成电核问题</button><button type="button" data-prompt="聚合当前证据并生成信审决策建议">生成决策建议</button></div>
+
+          <footer class="composer-area">
+            <div class="composer"><textarea id="agent-input" rows="2" maxlength="600" placeholder="继续对话，或描述一个信审目标…"></textarea><div class="composer-bottom"><div><button class="scope-button" id="scope-button" type="button"><span></span>当前申请上下文<svg><use href="#i-chevron"/></svg></button><button class="action-mode" id="safety-button" type="button"><svg><use href="#i-shield"/></svg>安全执行</button></div><button class="send-button" id="send-button" type="button"><span>发送</span><svg><use href="#i-arrow"/></svg></button></div></div>
+            <p id="execution-boundary-copy">多轮上下文由 MVP 后端临时维护（服务重启后失效） · 只读 Action 按整轮执行 · 业务写入仍需人工确认</p>
+          </footer>
+        </section>
+
+        <aside class="inspector">
+          <section class="inspector-section session-status"><div class="section-head"><div><span>AGENT SESSION</span><h2>当前运行上下文</h2></div><span class="status-live" id="agent-status"><i></i>CONNECTING</span></div><dl><div><dt>申请编号</dt><dd id="context-app-id">—</dd></div><div><dt>流程状态</dt><dd id="context-applicant">—</dd></div><div><dt>本体版本</dt><dd id="context-ontology">—</dd></div><div><dt>证据状态</dt><dd><span class="evidence-ready" id="context-evidence">读取中</span></dd></div><div class="conversation-context-row"><dt>对话轮次</dt><dd id="context-turn">新会话</dd></div><div class="conversation-context-row"><dt>临时记忆窗口</dt><dd id="context-window">等待首轮</dd></div></dl></section>
+
+          <section class="inspector-section planner-section"><div class="section-head"><div><span>PLANNER</span><h2>规划策略</h2></div><button type="button" id="planner-settings"><svg><use href="#i-sliders"/></svg></button></div><div class="planner-model"><span class="model-icon"><svg><use href="#i-spark"/></svg></span><span><b id="planner-model-name">后端规则规划</b><small id="planner-model-source">MVP Query Planner</small></span><em id="planner-mode">BACKEND</em></div><div class="strategy-row"><span><i></i>只读 Action 后端原子执行</span><b>开启</b></div><div class="strategy-row"><span><i class="amber"></i>写入 Action 人工确认</span><b>强制</b></div></section>
+
+          <section class="inspector-section action-catalog"><div class="section-head"><div><span>ACTION CATALOG</span><h2>可用能力</h2></div><em id="action-count">0</em></div><div id="inspector-catalog"><div class="sidebar-empty">正在读取后端能力…</div></div></section>
+
+          <section class="inspector-section event-log"><div class="section-head"><div><span>LIVE TRACE</span><h2>最近事件</h2></div></div><ul id="event-log"></ul></section>
+        </aside>
+      </main>
+
+      <section class="page-view model-management-view" data-view-panel="models" hidden>
+        <header class="view-heading model-view-heading"><div><span>MODEL CONTROL PLANE</span><h1>模型管理</h1><p>统一管理 MVP 后端的大模型连接。密钥仅提交到后端，Agent 自动使用当前启用模型。</p></div><div class="model-heading-actions"><button class="secondary-button" id="model-open-connection" type="button">后端连接状态</button><button class="primary-button" id="model-new" type="button">添加模型</button></div></header>
+
+        <div class="model-metrics">
+          <article><span>后端配置</span><b id="model-metric-total">0</b><small>集中保存，不跟随浏览器会话</small></article>
+          <article><span>已验证</span><b class="blue-text" id="model-metric-verified">0</b><small>连接测试通过</small></article>
+          <article><span>异常</span><b class="amber-text" id="model-metric-failed">0</b><small>需要检查地址或凭据</small></article>
+          <article><span>当前启用</span><b id="model-metric-active">规则</b><small id="model-active-copy">无启用模型时使用确定性 Planner</small></article>
+        </div>
+
+        <div class="model-auth-gate page-card" id="model-auth-gate" hidden>
+          <span><svg><use href="#i-lock"/></svg></span><div><small id="model-auth-kicker">LOCAL SESSION REQUIRED</small><h2 id="model-auth-title">本机安全会话尚未建立</h2><p id="model-auth-copy">工作台会在本机自动建立安全会话，不需要填写 X-API-Key。</p></div><button class="primary-button" id="model-auth-action" type="button">重新建立本机会话</button>
+        </div>
+
+        <div class="model-management-grid" id="model-management-grid">
+          <section class="page-card model-registry-card">
+            <header><div><span>MODEL REGISTRY</span><h2>后端模型列表</h2></div><button class="icon-button" id="model-refresh" type="button" aria-label="刷新模型列表"><svg><use href="#i-refresh"/></svg></button></header>
+            <div class="model-list" id="model-list"><div class="model-empty"><span class="model-empty-icon"><svg><use href="#i-spark"/></svg></span><b>正在读取模型配置</b><p>从 MVP 后端同步模型状态…</p></div></div>
+          </section>
+
+          <section class="page-card model-editor-card">
+            <header><div><span>CONFIGURATION</span><h2 id="model-editor-title">添加模型</h2><p id="model-editor-copy">保存后为草稿，连接测试通过后才可启用。</p></div><span class="model-status-pill draft" id="model-editor-status">DRAFT</span></header>
+            <form id="model-management-form" autocomplete="off">
+              <input id="model-config-id" type="hidden">
+              <label><span>配置名称</span><input id="model-display-name" maxlength="80" placeholder="例如：百炼生产模型"></label>
+              <label><span>提供方</span><select id="model-provider"><option value="openai_compatible">OpenAI Compatible</option><option value="deepseek">DeepSeek</option><option value="aliyun_bailian">阿里云百炼</option><option value="azure_openai">Azure OpenAI</option><option value="custom">自定义服务</option></select></label>
+              <label class="full"><span>API Base URL <small id="model-base-hint">由提供方预设，可按需调整</small></span><input id="model-base-url" type="url" placeholder="https://api.example.com/v1"></label>
+              <label><span>模型名称</span><input id="model-model-name" maxlength="120" placeholder="例如：qwen-plus"></label>
+              <label><span>API Key</span><input id="model-api-key" type="password" placeholder="新建必填；编辑时留空表示保留" autocomplete="new-password"></label>
+              <label class="full" id="model-api-version-field" hidden><span>Azure API Version</span><input id="model-api-version" maxlength="32" placeholder="2024-10-21"></label>
+              <label class="full model-temperature-field"><span>Temperature <b id="model-temp-value">0.1</b></span><input id="model-temperature" type="range" min="0" max="1" value="0.1" step="0.1"></label>
+            </form>
+            <div class="model-secret-note"><svg><use href="#i-shield"/></svg><p><b>单一配置源</b>外部模型密钥保存在 MVP 后端，列表接口仅返回脱敏信息；浏览器不再保存或随 Agent 请求发送密钥。</p></div>
+            <div class="test-result" id="model-management-result" hidden></div>
+            <footer><button class="clear-button" id="model-delete" type="button" disabled>删除</button><span></span><button class="secondary-button" id="model-test" type="button" disabled>重新测试</button><button class="secondary-button model-activate-button" id="model-activate" type="button" disabled>设为启用</button><button class="secondary-button" id="model-save-draft" type="button">仅保存</button><button class="primary-button" id="model-save-and-test" type="button">保存并测试</button></footer>
+          </section>
+        </div>
+      </section>
+
+      <section class="page-view" data-view-panel="runs" hidden>
+        <header class="view-heading"><div><span>AGENT RUNS</span><h1>任务运行</h1><p>查看本次浏览器会话中由 MVP 后端实际执行的 Agent 计划与结果。</p></div><button class="primary-button" type="button" data-view="chat">新建任务</button></header>
+        <div class="run-metrics"><article><span>本次会话</span><b id="metric-total">0</b><small>真实后端调用</small></article><article><span>执行中</span><b class="blue-text" id="metric-running">0</b><small>当前 Agent 请求</small></article><article><span>被证据阻塞</span><b class="amber-text" id="metric-blocked">0</b><small>缺少前置证据</small></article><article><span>执行成功</span><b id="metric-completed">0</b><small>只读 Action 完成</small></article></div>
+        <section class="page-card runs-card"><header class="card-toolbar"><div class="search-box"><svg><use href="#i-search"/></svg><input id="run-search" placeholder="搜索任务、申请或 Action"></div><div class="filter-buttons"><button class="active" type="button" data-run-filter="all">全部</button><button type="button" data-run-filter="running">运行中</button><button type="button" data-run-filter="waiting">待确认</button><button type="button" data-run-filter="completed">已完成</button></div></header><div class="runs-table" id="runs-table"></div></section>
+      </section>
+
+      <section class="page-view" data-view-panel="catalog" hidden>
+        <header class="view-heading"><div><span>ACTION REGISTRY</span><h1>Action 目录</h1><p>浏览后端实际注册的 Agent 工具与工作流写入 Action。</p></div><div class="view-count"><b id="catalog-count">0</b><span>个后端能力</span></div></header>
+        <section class="catalog-toolbar page-card"><div class="search-box"><svg><use href="#i-search"/></svg><input id="catalog-search" placeholder="搜索 Action 名称或用途"></div><div class="filter-buttons"><button class="active" type="button" data-action-filter="all">全部</button><button type="button" data-action-filter="READ">只读</button><button type="button" data-action-filter="FUNCTION">函数</button><button type="button" data-action-filter="WRITE">写入</button></div></section>
+        <div class="action-grid" id="action-grid"></div>
+      </section>
+
+      <section class="page-view" data-view-panel="knowledge" hidden>
+        <header class="view-heading"><div><span>POLICY &amp; KNOWLEDGE</span><h1>策略与知识</h1><p>展示规划边界；策略包开关当前仅作用于本地界面，不会修改后端规则。</p></div><button class="secondary-button" id="restore-policy" type="button">恢复本地显示</button></header>
+        <div class="knowledge-layout">
+          <section class="page-card policy-list"><header><div><span>ACTIVE PACKS</span><h2>已启用策略包</h2></div><em>4 / 5</em></header><label><span><i class="policy-icon blue">DTI</i><span><b>偿债能力策略</b><small>DTI 阈值、收入稳定性与压力测试</small></span></span><input type="checkbox" data-policy="dti" checked><i></i></label><label><span><i class="policy-icon green">CR</i><span><b>征信审查策略</b><small>逾期、查询、多头与存量负债</small></span></span><input type="checkbox" data-policy="credit" checked><i></i></label><label><span><i class="policy-icon amber">FR</i><span><b>反欺诈策略</b><small>身份、设备、联系人及关系网络</small></span></span><input type="checkbox" data-policy="fraud" checked><i></i></label><label><span><i class="policy-icon purple">DS</i><span><b>决策支持边界</b><small>只生成建议，不执行最终审批</small></span></span><input type="checkbox" data-policy="decision" checked disabled><i></i></label><label><span><i class="policy-icon gray">EX</i><span><b>实验性扩展规则</b><small>仅用于灰度场景，不进入默认规划</small></span></span><input type="checkbox" data-policy="experimental"><i></i></label></section>
+          <section class="page-card guardrail-card"><header><div><span>GUARDRAILS</span><h2>执行边界</h2></div><button type="button" id="open-safety-from-policy"><svg><use href="#i-sliders"/></svg></button></header><div class="boundary-item locked"><span><svg><use href="#i-lock"/></svg></span><div><b>禁止自动最终审批</b><p>Agent 只能生成决策支持，不得输出具有审批效力的结果。</p></div><em>强制</em></div><div class="boundary-item"><span><svg><use href="#i-shield"/></svg></span><div><b>写入 Action 需要确认</b><p>创建任务或记录意见前必须获得人工确认。</p></div><em>已启用</em></div><div class="boundary-item"><span><svg><use href="#i-database"/></svg></span><div><b>上下文最小化</b><p>Planner 仅接收完成当前目标所需的字段摘要。</p></div><em>已启用</em></div></section>
+          <section class="page-card prompt-card"><header><div><span>PLANNER INSTRUCTION</span><h2>规划边界预览</h2></div><em>服务端</em></header><pre>个人汽车信贷 Agent 只能调用服务端白名单内的只读工具；<br>默认选择完成目标所需的最少工具，仅在用户明确要求完整、全部或综合审查时允许多步骤。<br>不得生成 SQL，不得选择写入型 Action，不得声称执行最终审批。</pre><footer><span>实际规划指令与 trace 由 MVP 后端返回</span><button type="button" data-copy-policy>复制边界</button></footer></section>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="connection-modal" hidden>
+    <section class="modal connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-title"><header><div><span>MVP CONNECTION</span><h2 id="connection-title">连接现有 MVP 后端</h2><p id="connection-description">本机地址会自动建立 HttpOnly 安全会话，不需要填写 X-API-Key。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><form id="connection-form"><label class="full"><span>API Base URL</span><input id="connection-base" type="url" placeholder="http://127.0.0.1:8000/api"></label><div class="connection-local-info full" id="connection-local-info"><svg><use href="#i-shield"/></svg><p><b>打开即连</b>仅为受信任的本机页面签发短期会话，凭据保存在 HttpOnly Cookie 中，前端脚本不可读取。</p></div><label class="full" id="connection-token-field" hidden><span>MVP X-API-Key（仅远程连接）</span><input id="connection-token" type="password" autocomplete="off" placeholder="填写远程服务的 MVP_API_KEY"></label></form><div class="test-result" id="connection-result" hidden></div><footer><span></span><button class="secondary-button" id="test-connection" type="button">测试自动连接</button><button class="primary-button" id="save-connection" type="button">保存并自动连接</button></footer></section>
+  </div>
+
+  <div class="modal-backdrop" id="action-modal" hidden><section class="modal action-modal" role="dialog" aria-modal="true"><header><div><span>ACTION DETAIL</span><h2 id="action-title">Action 详情</h2><p id="action-subtitle"></p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><div id="action-detail"></div><footer><span></span><button class="primary-button" data-close-modal type="button">知道了</button></footer></section></div>
+  <div class="modal-backdrop" id="case-modal" hidden><section class="modal case-modal" role="dialog" aria-modal="true"><header><div><span>BUSINESS CONTEXT</span><h2>选择申请上下文</h2><p>数据来自现有个人信审工作流；切换后以该申请作为 Agent 上下文。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><div class="modal-search search-box"><svg><use href="#i-search"/></svg><input id="case-search" placeholder="搜索申请编号或流程状态"></div><div class="case-options" id="case-options"></div></section></div>
+  <div class="modal-backdrop" id="evidence-modal" hidden><section class="modal evidence-modal" role="dialog" aria-modal="true"><header><div><span>EVIDENCE CHAIN</span><h2>完整证据链</h2><p>展示后端就绪度检查与本次只读 Action 的真实输出。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><div class="evidence-overview"><span><b id="evidence-ready-count">0</b><small>已有证据</small></span><span><b id="evidence-missing-count">0</b><small>缺失证据</small></span><span><b id="evidence-tools-count">0</b><small>可执行工具</small></span><span><b id="evidence-status">—</b><small>就绪状态</small></span></div><div class="evidence-chain" id="evidence-chain"></div></section></div>
+  <div class="modal-backdrop" id="safety-modal" hidden><section class="modal safety-modal" role="dialog" aria-modal="true"><header><div><span>EXECUTION POLICY</span><h2>安全执行设置</h2><p>只读 Action 与对话轮次由后端原子提交；写入门禁由后端边界与本界面共同强制。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><form><label class="toggle-row full"><span><b>后端执行只读 Action</b><small>多轮模式下固定开启，避免 Action 结果与服务端对话记忆不一致</small></span><input id="auto-read" type="checkbox" checked disabled><i></i></label><label class="full"><span>写入 Action 策略</span><select id="write-policy"><option value="confirm">每次执行前确认</option><option value="deny">禁止执行写入 Action</option></select></label></form><footer><span></span><button class="secondary-button" data-close-modal type="button">取消</button><button class="primary-button" id="save-safety" type="button">保存设置</button></footer></section></div>
+  <div class="modal-backdrop" id="workflow-action-modal" hidden><section class="modal safety-modal" role="dialog" aria-modal="true"><header><div><span>WORKFLOW ACTION</span><h2 id="workflow-action-title">确认业务写入</h2><p id="workflow-action-copy">仅当前流程步骤处于 READY 时可执行。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><form id="workflow-action-form"></form><div class="test-result" id="workflow-action-result" hidden></div><footer><span></span><button class="secondary-button" data-close-modal type="button">取消</button><button class="primary-button" id="execute-workflow-action" type="button">确认并执行 Action</button></footer></section></div>
+  <div class="modal-backdrop" id="run-modal" hidden><section class="modal run-modal" role="dialog" aria-modal="true"><header><div><span>RUN DETAIL</span><h2 id="run-detail-title">任务详情</h2><p id="run-detail-subtitle"></p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><div id="run-detail-body"></div><footer><button class="clear-button" id="continue-run" type="button">在对话中继续</button><span></span><button class="primary-button" data-close-modal type="button">关闭</button></footer></section></div>
+  <div class="modal-backdrop" id="session-modal" hidden><section class="modal session-modal" role="dialog" aria-modal="true"><header><div><span>CONVERSATION</span><h2>会话操作</h2><p>管理当前 Agent 对话和真实 Action 运行。</p></div><button data-close-modal type="button"><svg><use href="#i-x"/></svg></button></header><div class="session-actions"><button type="button" id="rename-session"><svg><use href="#i-file"/></svg><span><b>重命名任务</b><small>修改左侧最近 Action 任务标题</small></span></button><button type="button" id="export-session"><svg><use href="#i-code"/></svg><span><b>导出 Action 摘要</b><small>仅导出裁剪后的回答与 Action 元数据</small></span></button><button type="button" id="clear-session"><svg><use href="#i-refresh"/></svg><span><b>清空并重新开始</b><small>保留当前申请，但重置后端对话标识</small></span></button></div></section></div>
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script src="credit-review.js?v=9"></script>
+</body>
+</html>

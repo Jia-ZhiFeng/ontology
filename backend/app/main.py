@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime,timezone
 
 from fastapi import FastAPI,Request
 from fastapi.exceptions import RequestValidationError
@@ -63,7 +64,14 @@ from .core.config import (
     ALERT_WEBHOOK_URL,
     EXTERNAL_CIRCUIT_FAILURE_THRESHOLD,
     EXTERNAL_CIRCUIT_OPEN_SECONDS,
+    LLM_CONFIG_ENCRYPTION_KEY,
+    MVP_AUTH_MODE,
     MVP_API_KEY,
+    MVP_LOCAL_SESSION_ALLOWED_ORIGINS,
+    MVP_LOCAL_SESSION_COOKIE_SECURE,
+    MVP_LOCAL_SESSION_SECRET,
+    MVP_LOCAL_SESSION_TRUST_PROXY,
+    MVP_LOCAL_SESSION_TTL_SECONDS,
     MVP_WORKFLOW_ACTOR_ID,
     NEBULA_HOST,
     NEBULA_PASSWORD,
@@ -77,10 +85,23 @@ from .core.config import (
     POSTGRES_USER,
     PHONE_TASK_DISPATCH_MODE,
     OPERATIONS_SCAN_SECONDS,
+    WORKBENCH_UNAUTHENTICATED,
     WORKFLOW_DISPATCH_LEASE_SECONDS,
 )
-from .core.security import api_key_matches
+from .core.security import (
+    LOCAL_SESSION_COOKIE_NAME,
+    MVP_API_KEY_REQUIRED_DETAIL,
+    api_key_matches,
+    cookie_write_origin_is_allowed,
+    is_trusted_local_session_request,
+    is_unauthenticated_workbench_path,
+    issue_local_session_token,
+    local_session_secret_is_usable,
+    verify_local_session_token,
+)
 from .kg.nebula import NebulaGraphService
+from .llm.config_repository import PostgresLLMConfigurationRepository
+from .llm.client import aclose_llm_http_clients
 from .ontology.models import OntologyProposal
 from .ontology.version_repository import OntologyVersionRepository
 from .postgres.client import PostgresService
@@ -94,6 +115,9 @@ async def lifespan(_app:FastAPI):
     postgres=PostgresService(
         POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DATABASE,POSTGRES_USER,POSTGRES_PASSWORD
     )
+    PostgresLLMConfigurationRepository(
+        postgres,LLM_CONFIG_ENCRYPTION_KEY
+    ).ensure_schema()
     execution_repository=PostgresActionExecutionRepository(postgres)
     execution_repository.ensure_schema()
     workflow_repository=PostgresPersonalCreditWorkflowRepository(
@@ -299,6 +323,7 @@ async def lifespan(_app:FastAPI):
     finally:
         stop_event.set()
         await asyncio.gather(worker_task,operations_task)
+        await aclose_llm_http_clients()
 
 
 app=FastAPI(
@@ -317,14 +342,136 @@ async def safe_request_validation_error(_request:Request,exc:RequestValidationEr
     ]
     return JSONResponse(status_code=422,content={"detail":errors})
 
+
+def _authentication_response(mode:str,expires_at:int|None=None)->dict:
+    return {
+        "authenticated":True,
+        "mode":mode,
+        "expires_at":(
+            datetime.fromtimestamp(expires_at,tz=timezone.utc).isoformat()
+            if expires_at is not None else None
+        ),
+    }
+
+
+def _set_authentication_state(request:Request)->None:
+    request.state.mvp_authenticated=False
+    request.state.mvp_auth_mode=None
+    request.state.mvp_auth_expires_at=None
+    request.state.mvp_local_session_signature_valid=False
+    if api_key_matches(MVP_API_KEY,request.headers.get("X-API-Key")):
+        request.state.mvp_authenticated=True
+        request.state.mvp_auth_mode="mvp_api_key"
+        return
+    if MVP_AUTH_MODE!="local_session":
+        return
+    expires_at=verify_local_session_token(
+        MVP_LOCAL_SESSION_SECRET,
+        request.cookies.get(LOCAL_SESSION_COOKIE_NAME),
+        MVP_LOCAL_SESSION_TTL_SECONDS,
+    )
+    client_host=request.client.host if request.client else None
+    if expires_at is not None:
+        request.state.mvp_local_session_signature_valid=True
+    if expires_at is not None and is_trusted_local_session_request(
+        client_host=client_host,
+        host_header=request.headers.get("host"),
+        origin=request.headers.get("origin"),
+        allowed_origins=MVP_LOCAL_SESSION_ALLOWED_ORIGINS,
+        trust_local_proxy=MVP_LOCAL_SESSION_TRUST_PROXY,
+        fetch_site=request.headers.get("sec-fetch-site"),
+    ):
+        request.state.mvp_authenticated=True
+        request.state.mvp_auth_mode="local_session"
+        request.state.mvp_auth_expires_at=expires_at
+
+
+@app.post("/api/auth/session")
+async def create_local_session(request:Request):
+    """Issue a short browser session only for the explicitly enabled local mode."""
+    if MVP_AUTH_MODE!="local_session":
+        return JSONResponse(
+            status_code=403,
+            content={"detail":"本机会话模式未启用，请使用 X-API-Key"},
+        )
+    if not local_session_secret_is_usable(MVP_LOCAL_SESSION_SECRET):
+        return JSONResponse(
+            status_code=503,
+            content={"detail":"本机会话签名密钥未配置或少于 32 字节"},
+        )
+    client_host=request.client.host if request.client else None
+    if not is_trusted_local_session_request(
+        client_host=client_host,
+        host_header=request.headers.get("host"),
+        origin=request.headers.get("origin"),
+        allowed_origins=MVP_LOCAL_SESSION_ALLOWED_ORIGINS,
+        trust_local_proxy=MVP_LOCAL_SESSION_TRUST_PROXY,
+        fetch_site=request.headers.get("sec-fetch-site"),
+        require_origin=True,
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail":"仅允许受信任的本机工作台建立会话"},
+        )
+    token,expires_at=issue_local_session_token(
+        MVP_LOCAL_SESSION_SECRET,MVP_LOCAL_SESSION_TTL_SECONDS
+    )
+    response=JSONResponse(_authentication_response("local_session",expires_at))
+    response.headers["Cache-Control"]="no-store"
+    response.headers["Pragma"]="no-cache"
+    response.set_cookie(
+        key=LOCAL_SESSION_COOKIE_NAME,
+        value=token,
+        max_age=MVP_LOCAL_SESSION_TTL_SECONDS,
+        expires=datetime.fromtimestamp(expires_at,tz=timezone.utc),
+        path="/api",
+        secure=MVP_LOCAL_SESSION_COOKIE_SECURE,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
 @app.middleware("http")
 async def require_mvp_api_key(request:Request,call_next):
-    if request.method=="OPTIONS" or request.url.path=="/api/health" or not request.url.path.startswith("/api/"):
+    # Authentication is resolved before the UAT read-only exception so a local
+    # session is visible to route-level external-model gates as well.
+    _set_authentication_state(request)
+    if (
+        request.state.mvp_local_session_signature_valid
+        and not cookie_write_origin_is_allowed(
+            request.method,
+            request.headers.get("origin"),
+            MVP_LOCAL_SESSION_ALLOWED_ORIGINS,
+            request.headers.get("sec-fetch-site"),
+        )
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail":"本机会话写请求的 Origin 校验失败"},
+        )
+    if (
+        request.method=="OPTIONS"
+        or request.url.path=="/api/health"
+        or request.url.path=="/api/auth/session"
+        or not request.url.path.startswith("/api/")
+        or is_unauthenticated_workbench_path(
+            request.url.path,
+            WORKBENCH_UNAUTHENTICATED and MVP_AUTH_MODE!="local_session",
+            request.method,
+        )
+    ):
         return await call_next(request)
-    if not MVP_API_KEY:
-        return JSONResponse(status_code=503,content={"detail":"服务端尚未配置 MVP_API_KEY，受保护接口已关闭"})
-    if not api_key_matches(MVP_API_KEY,request.headers.get("X-API-Key")):
-        return JSONResponse(status_code=401,content={"detail":"访问令牌缺失或无效，请在“访问与 LLM 配置”中填写"})
+    if request.state.mvp_authenticated:
+        return await call_next(request)
+    if not MVP_API_KEY and not (
+        MVP_AUTH_MODE=="local_session"
+        and local_session_secret_is_usable(MVP_LOCAL_SESSION_SECRET)
+    ):
+        return JSONResponse(status_code=503,content={"detail":"服务端尚未配置可用身份凭据，受保护接口已关闭"})
+    if not request.state.mvp_authenticated:
+        return JSONResponse(
+            status_code=401,content={"detail":MVP_API_KEY_REQUIRED_DETAIL}
+        )
     return await call_next(request)
 
 # CORS must wrap the early authentication responses so browsers can read the

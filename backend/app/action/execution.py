@@ -169,8 +169,11 @@ def action_request_digest(
 def action_idempotency_key_hash(
     action_name: str,
     request: Mapping[str, Any],
+    *,
+    designs: Mapping[str, Any] | None = None,
 ) -> str:
-    design = ACTION_RUNTIME_DESIGNS.get(action_name)
+    active_designs = ACTION_RUNTIME_DESIGNS if designs is None else designs
+    design = active_designs.get(action_name)
     if design is None:
         raise UnknownActionError(f"Action 设计不存在：{action_name}")
     if not isinstance(request, Mapping):
@@ -213,9 +216,11 @@ class ActionExecutionService:
         repository: ActionExecutionRepository,
         *,
         proposal=None,
+        designs: Mapping[str, Any] | None = None,
     ):
         self.repository = repository
         self.proposal = proposal or build_personal_credit_baseline()
+        self.designs = dict(ACTION_RUNTIME_DESIGNS if designs is None else designs)
         self.actions = {item.name: item for item in self.proposal.action_types}
         self.security = {item.action: item for item in self.proposal.dynamic_security}
 
@@ -229,7 +234,7 @@ class ActionExecutionService:
         actor_role: str,
         correlation_id: str | None = None,
     ) -> ActionReservation:
-        if action_name not in self.actions or action_name not in ACTION_RUNTIME_DESIGNS:
+        if action_name not in self.actions or action_name not in self.designs:
             raise UnknownActionError(f"Action 不存在：{action_name}")
         if not isinstance(ontology_version, str) or not ontology_version.strip():
             raise ActionRequestError("ontology_version 不能为空")
@@ -251,7 +256,11 @@ class ActionExecutionService:
             ontology_version=ontology_version.strip(),
             actor_id=actor_id.strip(),
             actor_role=actor_role.strip(),
-            idempotency_key_hash=action_idempotency_key_hash(action_name, request),
+            idempotency_key_hash=action_idempotency_key_hash(
+                action_name,
+                request,
+                designs=self.designs,
+            ),
             request_digest=action_request_digest(
                 action_name,
                 ontology_version.strip(),

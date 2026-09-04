@@ -1,5 +1,6 @@
 import pathlib
 import unittest
+from unittest.mock import patch
 
 from app.action.workflow import (
     OPTIONAL_WORKFLOW_ACTIONS,
@@ -10,6 +11,7 @@ from app.action.workflow import (
     ready_workflow_actions,
     workflow_request_digest,
 )
+from app.agent.personal_credit import PersonalCreditAgentService
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -59,6 +61,17 @@ class PersonalCreditWorkflowTests(unittest.TestCase):
             ready_workflow_actions(statuses),
             ("record_decision_recommendation",),
         )
+
+    def test_legacy_agent_planning_is_not_governed_by_workflow_dependencies(self):
+        expected = [{
+            "tool_name": "preview_risk_assessment",
+            "reason": "根据用户目标映射到最短只读能力路径。",
+        }]
+        with patch.dict(WORKFLOW_DEPENDENCIES, {}, clear=True):
+            self.assertEqual(
+                PersonalCreditAgentService._deterministic_tools("查风险", 1),
+                expected,
+            )
 
     def test_dispatch_ids_do_not_change_business_request_digest(self):
         first = workflow_request_digest(
@@ -159,6 +172,11 @@ class PersonalCreditWorkflowTests(unittest.TestCase):
         self.assertIn('id="page-runtime"', frontend)
         self.assertIn("window.renderRuntime", frontend_adapter)
         self.assertIn("/workflows/personal-credit/summary", frontend_adapter)
+        self.assertIn('pinned_ontology_version=workflow["ontology_version"]', routes)
+        self.assertIn("_ACTION_ONTOLOGY_VERSION_OVERRIDE.set", routes)
+        self.assertIn("ontology_version=pinned_ontology_version", routes)
+        self.assertIn("ACTION_ONTOLOGY_VERSION_INCOMPATIBLE", routes)
+        self.assertIn("_action_runtime_compatibility_errors(proposal)", routes)
 
 
 if __name__ == "__main__":

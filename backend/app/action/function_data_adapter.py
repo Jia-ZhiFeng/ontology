@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
+from ..ontology.baseline import build_personal_credit_baseline
+from ..ontology.data_binding import OntologyDataBinding, OntologyDataBindingError
 from .business_functions import build_personal_credit_readonly_registry
 from .function_registry import FunctionExecutionContext, FunctionRegistry
 
@@ -26,6 +28,8 @@ class ApplicationFunctionSnapshot:
     phone_verification: Mapping[str, Any] | None
     snapshot_id: str
     snapshot_started_at: str
+    data_binding_version: str
+    data_binding_digest: str
 
 
 def _time_text(value: Any) -> str:
@@ -40,13 +44,55 @@ def _time_text(value: Any) -> str:
 class PersonalCreditFunctionDataAdapter:
     """为 9 个只读 Function 构造最小化 PostgreSQL 和 NebulaGraph 输入。"""
 
-    def __init__(self, postgres_service, nebula_factory: Callable[[], Any]):
+    def __init__(
+        self,
+        postgres_service,
+        nebula_factory: Callable[[], Any],
+        *,
+        proposal=None,
+    ):
         if not hasattr(postgres_service, "conn"):
             raise TypeError("postgres_service 必须提供 conn()")
         if not callable(nebula_factory):
             raise TypeError("nebula_factory 必须可调用")
         self.postgres = postgres_service
         self.nebula_factory = nebula_factory
+        try:
+            self.bindings = OntologyDataBinding(
+                proposal or build_personal_credit_baseline()
+            )
+            self.bindings.require({
+                "LoanApplication": (
+                    "application_id", "loan_amount", "application_status",
+                    "decision_result", "borrower_id", "vehicle_vin",
+                ),
+                "NaturalPerson": ("id_number", "monthly_income"),
+                "Vehicle": ("vin", "invoice_price", "guide_price"),
+                "CreditReport": (
+                    "report_id", "subject_id_number", "query_time",
+                    "outstanding_loan_count", "overdue_3y_count",
+                    "total_overdue_count", "inquiry_count",
+                ),
+                "ExternalDebt": (
+                    "debt_id", "borrower_id", "monthly_payment", "overdue_status",
+                ),
+                "AntiFraudReport": (
+                    "fraud_report_id", "application_id", "fraud_score", "result",
+                    "hit_details",
+                ),
+                "RiskAssessmentReport": (
+                    "assessment_id", "application_id", "risk_level", "pd_value",
+                    "risk_factors", "check_result", "assessment_time",
+                ),
+                "PhoneVerificationRecord": (
+                    "verification_id", "application_id", "conclusion", "doubts",
+                    "call_time",
+                ),
+            })
+        except OntologyDataBindingError as error:
+            raise FunctionDataAdapterError(
+                f"本体数据绑定不可执行：{error}"
+            ) from error
 
     @staticmethod
     def _application_id(value: str) -> str:
@@ -59,6 +105,10 @@ class PersonalCreditFunctionDataAdapter:
 
     def load_postgres_snapshot(self, application_id: str) -> ApplicationFunctionSnapshot:
         identifier = self._application_id(application_id)
+        binding = self.bindings
+        table = binding.table_sql
+        column = binding.column_sql
+        select = binding.select_sql
         with self.postgres.conn() as connection, connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             cursor.execute("""
@@ -69,18 +119,24 @@ class PersonalCreditFunctionDataAdapter:
             if not snapshot:
                 raise FunctionDataAdapterError("PostgreSQL 未返回一致性快照信息")
 
-            cursor.execute("""
-                SELECT application.application_id, application.loan_amount,
-                       application.application_status, application.decision_result,
-                       application.borrower_id, application.vehicle_vin,
-                       person.monthly_income,
-                       vehicle.invoice_price, vehicle.guide_price
-                FROM public.loan_application AS application
-                LEFT JOIN public.natural_person AS person
-                  ON person.id_number = application.borrower_id
-                LEFT JOIN public.vehicle AS vehicle
-                  ON vehicle.vin = application.vehicle_vin
-                WHERE application.application_id = %s
+            cursor.execute(f"""
+                SELECT {select('LoanApplication','application_id',alias='application')},
+                       {select('LoanApplication','loan_amount',alias='application')},
+                       {select('LoanApplication','application_status',alias='application')},
+                       {select('LoanApplication','decision_result',alias='application')},
+                       {select('LoanApplication','borrower_id',alias='application')},
+                       {select('LoanApplication','vehicle_vin',alias='application')},
+                       {select('NaturalPerson','monthly_income',alias='person')},
+                       {select('Vehicle','invoice_price',alias='vehicle')},
+                       {select('Vehicle','guide_price',alias='vehicle')}
+                FROM {table('LoanApplication')} AS "application"
+                LEFT JOIN {table('NaturalPerson')} AS "person"
+                  ON {column('NaturalPerson','id_number',alias='person')}
+                   = {column('LoanApplication','borrower_id',alias='application')}
+                LEFT JOIN {table('Vehicle')} AS "vehicle"
+                  ON {column('Vehicle','vin',alias='vehicle')}
+                   = {column('LoanApplication','vehicle_vin',alias='application')}
+                WHERE {column('LoanApplication','application_id',alias='application')} = %s
             """, (identifier,))
             base = cursor.fetchone()
             if not base:
@@ -90,47 +146,64 @@ class PersonalCreditFunctionDataAdapter:
             if not base.get("vehicle_vin"):
                 raise FunctionDataAdapterError(f"贷款申请缺少车辆关联：{identifier}")
 
-            cursor.execute("""
-                SELECT report_id, outstanding_loan_count, overdue_3y_count,
-                       total_overdue_count, inquiry_count
-                FROM public.credit_report
-                WHERE subject_id_number = %s
-                ORDER BY query_time DESC NULLS LAST, report_id DESC
+            cursor.execute(f"""
+                SELECT {select('CreditReport','report_id',alias='report')},
+                       {select('CreditReport','outstanding_loan_count',alias='report')},
+                       {select('CreditReport','overdue_3y_count',alias='report')},
+                       {select('CreditReport','total_overdue_count',alias='report')},
+                       {select('CreditReport','inquiry_count',alias='report')}
+                FROM {table('CreditReport')} AS "report"
+                WHERE {column('CreditReport','subject_id_number',alias='report')} = %s
+                ORDER BY {column('CreditReport','query_time',alias='report')} DESC NULLS LAST,
+                         {column('CreditReport','report_id',alias='report')} DESC
                 LIMIT 1
             """, (base["borrower_id"],))
             credit_report = cursor.fetchone()
 
-            cursor.execute("""
-                SELECT debt_id, monthly_payment, overdue_status
-                FROM public.external_debt
-                WHERE borrower_id = %s
-                ORDER BY debt_id
+            cursor.execute(f"""
+                SELECT {select('ExternalDebt','debt_id',alias='debt')},
+                       {select('ExternalDebt','monthly_payment',alias='debt')},
+                       {select('ExternalDebt','overdue_status',alias='debt')}
+                FROM {table('ExternalDebt')} AS "debt"
+                WHERE {column('ExternalDebt','borrower_id',alias='debt')} = %s
+                ORDER BY {column('ExternalDebt','debt_id',alias='debt')}
             """, (base["borrower_id"],))
             external_debts = cursor.fetchall()
 
-            cursor.execute("""
-                SELECT fraud_report_id, fraud_score, result, hit_details
-                FROM public.anti_fraud_report
-                WHERE application_id = %s
-                ORDER BY fraud_report_id DESC
+            cursor.execute(f"""
+                SELECT {select('AntiFraudReport','fraud_report_id',alias='fraud')},
+                       {select('AntiFraudReport','fraud_score',alias='fraud')},
+                       {select('AntiFraudReport','result',alias='fraud')},
+                       {select('AntiFraudReport','hit_details',alias='fraud')}
+                FROM {table('AntiFraudReport')} AS "fraud"
+                WHERE {column('AntiFraudReport','application_id',alias='fraud')} = %s
+                ORDER BY {column('AntiFraudReport','fraud_report_id',alias='fraud')} DESC
                 LIMIT 1
             """, (identifier,))
             anti_fraud_report = cursor.fetchone()
 
-            cursor.execute("""
-                SELECT assessment_id, risk_level, pd_value, risk_factors, check_result
-                FROM public.risk_assessment_report
-                WHERE application_id = %s
-                ORDER BY assessment_time DESC NULLS LAST, assessment_id DESC
+            cursor.execute(f"""
+                SELECT {select('RiskAssessmentReport','assessment_id',alias='assessment')},
+                       {select('RiskAssessmentReport','risk_level',alias='assessment')},
+                       {select('RiskAssessmentReport','pd_value',alias='assessment')},
+                       {select('RiskAssessmentReport','risk_factors',alias='assessment')},
+                       {select('RiskAssessmentReport','check_result',alias='assessment')}
+                FROM {table('RiskAssessmentReport')} AS "assessment"
+                WHERE {column('RiskAssessmentReport','application_id',alias='assessment')} = %s
+                ORDER BY {column('RiskAssessmentReport','assessment_time',alias='assessment')} DESC NULLS LAST,
+                         {column('RiskAssessmentReport','assessment_id',alias='assessment')} DESC
                 LIMIT 1
             """, (identifier,))
             risk_assessment = cursor.fetchone()
 
-            cursor.execute("""
-                SELECT verification_id, conclusion, doubts
-                FROM public.phone_verification_record
-                WHERE application_id = %s
-                ORDER BY call_time DESC NULLS LAST, verification_id DESC
+            cursor.execute(f"""
+                SELECT {select('PhoneVerificationRecord','verification_id',alias='phone')},
+                       {select('PhoneVerificationRecord','conclusion',alias='phone')},
+                       {select('PhoneVerificationRecord','doubts',alias='phone')}
+                FROM {table('PhoneVerificationRecord')} AS "phone"
+                WHERE {column('PhoneVerificationRecord','application_id',alias='phone')} = %s
+                ORDER BY {column('PhoneVerificationRecord','call_time',alias='phone')} DESC NULLS LAST,
+                         {column('PhoneVerificationRecord','verification_id',alias='phone')} DESC
                 LIMIT 1
             """, (identifier,))
             phone_verification = cursor.fetchone()
@@ -158,7 +231,27 @@ class PersonalCreditFunctionDataAdapter:
             phone_verification=phone_verification,
             snapshot_id=str(snapshot["snapshot_id"]),
             snapshot_started_at=_time_text(snapshot["snapshot_started_at"]),
+            data_binding_version=binding.ontology_version,
+            data_binding_digest=binding.binding_digest,
         )
+
+    def resolve_postgres_snapshot(
+        self,
+        application_id: str,
+        snapshot: ApplicationFunctionSnapshot | None = None,
+    ) -> ApplicationFunctionSnapshot:
+        """Reuse a caller-owned turn snapshot, or load one when absent."""
+        identifier = self._application_id(application_id)
+        if snapshot is None:
+            return self.load_postgres_snapshot(identifier)
+        snapshot_application_id = str(
+            snapshot.application.get("application_id") or ""
+        ).strip()
+        if snapshot_application_id != identifier:
+            raise FunctionDataAdapterError("共享快照与当前贷款申请不匹配")
+        if snapshot.data_binding_version != self.bindings.ontology_version:
+            raise FunctionDataAdapterError("共享快照与当前本体数据绑定版本不匹配")
+        return snapshot
 
     def load_association_graph(self, borrower_id: str, *, hops: int = 2, limit: int = 300) -> dict[str, Any]:
         service = self.nebula_factory()
@@ -202,6 +295,8 @@ class PersonalCreditFunctionDataAdapter:
             metadata={
                 "postgres_snapshot_id": snapshot.snapshot_id,
                 "postgres_snapshot_mode": "repeatable_read_read_only",
+                "data_binding_version": snapshot.data_binding_version,
+                "data_binding_digest": snapshot.data_binding_digest,
                 "graph_snapshot_time": association_input["graph_snapshot_time"],
                 "cross_store_atomic": False,
             },
@@ -265,6 +360,8 @@ class PersonalCreditFunctionDataAdapter:
             "read_only": True,
             "postgres_snapshot_id": snapshot.snapshot_id,
             "postgres_snapshot_time": snapshot.snapshot_started_at,
+            "data_binding_version": snapshot.data_binding_version,
+            "data_binding_digest": snapshot.data_binding_digest,
             "graph_snapshot_time": association_input["graph_snapshot_time"],
             "cross_store_atomic": False,
             "execution_order": list(outputs),
@@ -279,9 +376,10 @@ class PersonalCreditFunctionDataAdapter:
         action_execution_id: str | None = None,
         actor: str | None = None,
         registry: FunctionRegistry | None = None,
+        snapshot: ApplicationFunctionSnapshot | None = None,
     ) -> dict[str, Any]:
         """Execute only the five Functions declared by generate_risk_assessment."""
-        snapshot = self.load_postgres_snapshot(application_id)
+        snapshot = self.resolve_postgres_snapshot(application_id, snapshot)
         active_registry = registry or build_personal_credit_readonly_registry()
         context = FunctionExecutionContext(
             ontology_version=ontology_version,
@@ -291,6 +389,8 @@ class PersonalCreditFunctionDataAdapter:
             metadata={
                 "postgres_snapshot_id": snapshot.snapshot_id,
                 "postgres_snapshot_mode": "repeatable_read_read_only",
+                "data_binding_version": snapshot.data_binding_version,
+                "data_binding_digest": snapshot.data_binding_digest,
                 "cross_store_atomic": True,
             },
         )
@@ -344,6 +444,8 @@ class PersonalCreditFunctionDataAdapter:
             "read_only": True,
             "postgres_snapshot_id": snapshot.snapshot_id,
             "postgres_snapshot_time": snapshot.snapshot_started_at,
+            "data_binding_version": snapshot.data_binding_version,
+            "data_binding_digest": snapshot.data_binding_digest,
             "graph_snapshot_time": None,
             "cross_store_atomic": True,
             "execution_order": list(outputs),
@@ -379,6 +481,8 @@ class PersonalCreditFunctionDataAdapter:
             metadata={
                 "postgres_snapshot_id": snapshot.snapshot_id,
                 "postgres_snapshot_mode": "repeatable_read_read_only",
+                "data_binding_version": snapshot.data_binding_version,
+                "data_binding_digest": snapshot.data_binding_digest,
                 "graph_snapshot_time": association_input["graph_snapshot_time"],
                 "cross_store_atomic": False,
             },
@@ -393,6 +497,8 @@ class PersonalCreditFunctionDataAdapter:
             "read_only": True,
             "postgres_snapshot_id": snapshot.snapshot_id,
             "postgres_snapshot_time": snapshot.snapshot_started_at,
+            "data_binding_version": snapshot.data_binding_version,
+            "data_binding_digest": snapshot.data_binding_digest,
             "graph_snapshot_time": association_input["graph_snapshot_time"],
             "cross_store_atomic": False,
             "execution_order": ["detect_association_risk"],
@@ -446,9 +552,10 @@ class PersonalCreditFunctionDataAdapter:
         action_execution_id: str | None = None,
         actor: str | None = None,
         registry: FunctionRegistry | None = None,
+        snapshot: ApplicationFunctionSnapshot | None = None,
     ) -> dict[str, Any]:
         """Execute only generate_phone_questions for the phone-task Action."""
-        snapshot = self.load_postgres_snapshot(application_id)
+        snapshot = self.resolve_postgres_snapshot(application_id, snapshot)
         risk = snapshot.risk_assessment
         fraud = snapshot.anti_fraud_report
         if not risk or not all(
@@ -472,6 +579,8 @@ class PersonalCreditFunctionDataAdapter:
             metadata={
                 "postgres_snapshot_id": snapshot.snapshot_id,
                 "postgres_snapshot_mode": "repeatable_read_read_only",
+                "data_binding_version": snapshot.data_binding_version,
+                "data_binding_digest": snapshot.data_binding_digest,
                 "cross_store_atomic": True,
             },
         )
@@ -490,6 +599,8 @@ class PersonalCreditFunctionDataAdapter:
             "read_only": True,
             "postgres_snapshot_id": snapshot.snapshot_id,
             "postgres_snapshot_time": snapshot.snapshot_started_at,
+            "data_binding_version": snapshot.data_binding_version,
+            "data_binding_digest": snapshot.data_binding_digest,
             "cross_store_atomic": True,
             "execution_order": ["generate_phone_questions"],
             "functions": {"generate_phone_questions": output},
@@ -503,9 +614,10 @@ class PersonalCreditFunctionDataAdapter:
         action_execution_id: str | None = None,
         actor: str | None = None,
         registry: FunctionRegistry | None = None,
+        snapshot: ApplicationFunctionSnapshot | None = None,
     ) -> dict[str, Any]:
         """Execute only the two Functions declared by manual-review Actions."""
-        snapshot = self.load_postgres_snapshot(application_id)
+        snapshot = self.resolve_postgres_snapshot(application_id, snapshot)
         risk = snapshot.risk_assessment
         fraud = snapshot.anti_fraud_report
         phone = snapshot.phone_verification
@@ -529,6 +641,8 @@ class PersonalCreditFunctionDataAdapter:
             metadata={
                 "postgres_snapshot_id": snapshot.snapshot_id,
                 "postgres_snapshot_mode": "repeatable_read_read_only",
+                "data_binding_version": snapshot.data_binding_version,
+                "data_binding_digest": snapshot.data_binding_digest,
                 "cross_store_atomic": True,
             },
         )
@@ -560,6 +674,8 @@ class PersonalCreditFunctionDataAdapter:
             "read_only": True,
             "postgres_snapshot_id": snapshot.snapshot_id,
             "postgres_snapshot_time": snapshot.snapshot_started_at,
+            "data_binding_version": snapshot.data_binding_version,
+            "data_binding_digest": snapshot.data_binding_digest,
             "graph_snapshot_time": None,
             "cross_store_atomic": True,
             "execution_order": list(outputs),

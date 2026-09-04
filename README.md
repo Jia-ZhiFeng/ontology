@@ -17,6 +17,8 @@ Action 层分层、统一返回信封和 Function 注册中心边界见 `PERSONA
 9 个 Function 的实现版本、规则、数据适配、失败关闭和真实样例结果见 `PERSONAL_CREDIT_FUNCTION_IMPLEMENTATIONS.md`。
 8 个 Action 的请求/响应、步骤 DAG、状态机、权限、幂等、审计、错误码、重试和补偿设计见 `PERSONAL_CREDIT_ACTION_DESIGN.md`；机器可读目录位于 `backend/app/action/action_design_catalog.py`。
 
+阶段2的统一 `ActionCapability` 内部合同见 `PERSONAL_CREDIT_ACTION_CAPABILITY.md`。业务 `ActionType` 仍为 8 个 WRITE；4 个 legacy 只读工具以 `PROJECTED` 能力记录过渡，因此标准目录为 8 WRITE + 4 READ，但只读记录不计入业务 Action 数。完整目录含内部 Schema 和 runtime binding，当前不直接暴露给模型或公开 API；所有 WRITE 对 Agent 仍仅允许生成 Proposal，真实执行保持关闭。
+
 申请级流程编排见 `PERSONAL_CREDIT_WORKFLOW_ORCHESTRATION.md`。它把 8 个 Action 组织为持久化流程，支持征信/反欺诈并行、人工复核条件跳过、Outbox 状态自动对账、崩溃租约恢复和追加式流程审计；流程终点仍只是决策建议。
 八 Action 合成业务验收数据、独立 `mvp_uat` 存储、沙箱启用和可重复执行方式见 `ACTION_CHAIN_UAT_GUIDE.md`；业务结果只允许由对应 Action 生成，不通过 SQL 预填。
 首个风险评估 Action 的 API、写入规则、跨库补偿和真实受控验收见 `PERSONAL_CREDIT_GENERATE_RISK_ASSESSMENT_ACTION.md`。
@@ -47,7 +49,9 @@ Docker Compose 就绪门禁、NebulaGraph Storage 注册、健康检查和数据
 docker compose up -d --build --wait
 ```
 
-- 前端：http://localhost:8080
+- 本体建模后台：http://localhost:8080
+- 个人信审 Agent 工作台（主界面）：http://localhost:8080/credit-review.html
+- 旧版信审流程工作台（兼容入口）：http://localhost:8080/workbench.html
 - 后端 API：http://localhost:8000/docs
 - PostgreSQL：localhost:5432
 - NebulaGraph：localhost:9669
@@ -56,13 +60,17 @@ Compose 会依次等待 PostgreSQL、NebulaGraph Meta/Storage/Graph、Storage Ho
 
 ## 访问与隐私
 
-- 除 `GET /api/health` 外，所有 `/api/*` 接口都要求请求头 `X-API-Key`，其值由服务端 `.env` 的 `MVP_API_KEY` 配置。
-- 首次打开前端后，在“模型管理”的“MVP 服务访问”中填写同一令牌。前端仅保存到当前浏览器的 `sessionStorage`，关闭会话后清除。
-- 当前前端以候选 OntoStudio HTML 为唯一界面，通过 `frontend/live-backend.js` 对接真实服务。账号管理、权限管理和角色切换已从界面与源码删除；工作流 Action 使用后端 `request_fields` 生成字段化表单，不要求手写 JSON，并可在每个步骤查看脱敏后的有效输入与完整业务输出。
+- 本地 Docker 默认使用 `MVP_AUTH_MODE=local_session`。工作台启动时调用 `POST /api/auth/session`，后端只为 loopback Host、精确允许的本机 Origin 和可信本机代理签发 15 分钟短会话；Cookie 固定为 `HttpOnly`、`SameSite=Strict`、`Path=/api`，浏览器不再读取或填写 `MVP_API_KEY`。Cookie 鉴权的写请求还会再次执行精确 Origin 校验。
+- CLI、自动化和远程部署继续支持 `X-API-Key`；远程环境应设置 `MVP_AUTH_MODE=api_key`。本地会话签名可通过独立的 `MVP_LOCAL_SESSION_SECRET` 配置；仅本地模式允许回退到 32 字节以上的 `MVP_API_KEY`。Docker 发布端口均绑定 `127.0.0.1`，不要在公网绑定下启用 `MVP_LOCAL_SESSION_TRUST_PROXY`。
+- `frontend/credit-review.html` 是个人信审业务主界面。用户可在同一案件中连续对话；后端保存最近 8 轮脱敏上下文，Planner 最多拆解为 4 个有序只读 Action，并返回逐步执行轨迹、证据链和后续写入建议。前端不生成模拟结论；所有业务写入都停在人工确认表单，确认后才调用工作流接口。
+- `frontend/workbench.html` 保留为兼容入口，继续提供 8 步信审流程的传统办理视图；本体建模后台仍通过 `frontend/live-backend.js` 对接真实服务。
+- 对话 Agent 运行模式由服务端 `PERSONAL_CREDIT_AGENT_MODE` 控制，当前默认且可回滚值为 `legacy`。`ontology_agent` 是后续阶段的预留模式，在真实运行时接入前会明确返回 `ONTOLOGY_AGENT_NOT_READY`，不会静默回落、调用模型或执行 Action。客户端不能通过 `/run` 请求切换模式；修改环境变量后需要重启后端。该开关不影响传统 Workflow、独立 Action API 或既有 outbox 消费。
+- 外部对话 / Planner 模型统一在 `credit-review.html` 左侧“模型管理”模块中配置。API Key 仅在新增或轮换时提交一次，由 PostgreSQL `pgcrypto` 加密保存；列表只返回脱敏状态，浏览器不再保存模型密钥，Agent 请求也不再携带临时 `llm` 配置。配置必须先通过当前版本连接测试才能启用，后续 Agent 自动使用后端唯一启用模型；没有启用模型时使用确定性 Planner。生产环境应设置独立的 `LLM_CONFIG_ENCRYPTION_KEY`；本地未设置时会回退使用 `MVP_API_KEY`，此时轮换 MVP Key 后需要重新填写外部模型密钥。
+- 模型 API Key 与 MVP 后端身份会话仍是不同安全边界：前者由后端集中管理，后者只用于授权模型管理、模型调用和业务写入。`api_key` UAT 环境可将 `WORKBENCH_UNAUTHENTICATED=true`，仅匿名开放精确列出的个人信审查询；`local_session` 模式会强制关闭该匿名旁路。若后端存在启用模型，未认证 Agent 请求会在解密密钥或访问模型前返回 401，不会消耗外部模型额度。
 - 提示词模板当前仅保留为候选设计预览，文档抽取也明确显示“后端尚未提供接口”；两者不会返回前端模拟结果。
 - `.env.example` 只提供占位值；接入真实业务数据前，必须为 `MVP_API_KEY`、PostgreSQL 和 NebulaGraph 分别更换强随机密钥，并确保 `.env` 不进入版本库或交付包。
 - PostgreSQL 数据、图谱快照、关联查询、映射报告和公理违规结果在 API 出口默认脱敏；数据库与图数据库内部值不被修改，因此不会影响公理校验、映射和同步。
-- LLM 只接收 Schema、字段结构、空值状态和类型占位符，不再发送 PostgreSQL 样本原值。允许的服务地址由 `LLM_ALLOWED_BASE_URLS` 精确白名单控制，多个地址以英文逗号分隔。
+- 本体生成 LLM 只接收 Schema、字段结构、空值状态和类型占位符，不发送 PostgreSQL 样本原值。业务 Agent 的 Planner 接收用户填写的短目标文本、最近轮次的脱敏摘要、当前申请上下文占位标识、本体版本、工具目录和证据可用状态；Action 执行后的总结模型只接收按工具白名单裁剪的风险/电核/决策摘要。两者均不接收真实申请编号、原始 Action 结果、快照/引用/血缘标识，以及数据库中的收入、金额、证件号、电话或报告原值。工作台明确禁止在目标文本中粘贴这些业务资料，服务端将目标长度限制为 500 字符。OpenAI Compatible、自定义服务和 Azure 地址由 `LLM_ALLOWED_BASE_URLS` 精确白名单控制；DeepSeek 与阿里云百炼使用服务端内置的严格 HTTPS Provider 规则，其中百炼仅接受官方共享域或规范的 Workspace Compatible 地址。
 - HTTP LLM 地址默认禁止。仅在本机调试时可将 `LLM_ALLOW_INSECURE_LOCAL=true`，并把 `http://localhost...` 或 `http://127.0.0.1...` 的完整地址加入白名单。
 
 命令行调用示例：
@@ -75,9 +83,11 @@ curl -H "X-API-Key: <MVP_API_KEY>" http://localhost:8000/api/kg/stats
 
 ## 主要接口
 
-下列接口除健康检查外均需携带 `X-API-Key`。
+下列接口除健康检查和本机会话签发外，均需有效本机会话或 `X-API-Key`。
 
 - `GET /api/health`：检查 PostgreSQL 与 NebulaGraph
+- `POST /api/auth/session`：仅在 `local_session` 模式及可信本机请求下签发短期 HttpOnly Cookie；响应返回 `authenticated`、`mode` 和 `expires_at`，不返回会话值
+- `GET /api/auth/check`：无副作用地验证本机会话或 `X-API-Key`，并返回当前认证模式及会话到期时间
 - `GET /api/postgres/schema`：读取 PostgreSQL Schema
 - `GET /api/postgres/data/{table}`：通过服务端白名单校验读取指定业务表的脱敏分页预览
 - `POST /api/postgres/profile`：读取样本
@@ -125,6 +135,12 @@ curl -H "X-API-Key: <MVP_API_KEY>" http://localhost:8000/api/kg/stats
 - `POST /api/workflows/personal-credit/{workflow_id}/refresh`：根据 Action/Outbox 状态立即推进流程；后台也会定期自动对账
 - `POST /api/workflows/personal-credit/{workflow_id}/steps/{action_name}/skip`：填写原因后跳过条件人工复核；其他步骤不可跳过
 - `POST /api/workflows/personal-credit/{workflow_id}/cancel`：在没有运行中 Action 时取消编排，不删除既有业务事实和审计
+- `GET /api/agents/personal-credit/tools`：读取 Agent 可选择的四个只读工具、当前服务端运行模式，以及禁止写入、禁止最终审批的执行边界
+- `GET /api/agents/personal-credit/{application_id}/readiness`：按申请和本体版本检查证据可用状态、可执行工具及缺失证据
+- `POST /api/agents/personal-credit/tools/{tool_name}/execute`：直接运行指定白名单只读工具；支持风险预览、电核问题和决策建议，不创建业务记录
+- `GET|POST /api/llm/configs`、`PUT|DELETE /api/llm/configs/{id}`：列出脱敏模型配置，或新增、更新和按版本删除配置；全部要求 MVP 鉴权。
+- `POST /api/llm/configs/{id}/test|activate|deactivate`：测试当前配置版本、启用已验证模型或停用模型。启用切换由数据库原子约束保证最多一个活动模型。
+- `POST /api/agents/personal-credit/run`：在当前默认的 `legacy` 模式下，自动使用后端当前启用模型，或在没有启用模型时使用确定性路由完成多轮对话与 Query 拆解；请求不接收模型密钥或运行模式，可携带上一轮返回的 `conversation_id`。响应保留既有字段并附加 `agent_mode`，同时返回从 1 开始的 `turn_index` 和去敏 `context_window`。`CHAT` 不读取案件；目标明确时最多规划并执行 4 个有序只读 Action，同时返回 `plan.steps`、`executions`、`execution_summary` 和仅供确认的 `proposed_actions`。无意义、域外或目标不明确的输入返回 `NO_ACTION / NEEDS_CLARIFICATION` 且执行数为 0。会话内存默认保留 30 分钟、最多 8 轮，绑定申请与本体版本，服务重启后失效；未携带 `conversation_id` 的旧单轮调用仍兼容。
 - `GET /api/operations/summary`：读取活动告警、等级、熔断器和通知配置摘要
 - `GET /api/operations/alerts`：按 `OPEN`、`ACKNOWLEDGED` 或 `RESOLVED` 查询运行告警
 - `GET /api/operations/circuits`：查询征信、反欺诈、电核与 LLM 外部依赖熔断状态
@@ -140,6 +156,8 @@ curl -H "X-API-Key: <MVP_API_KEY>" http://localhost:8000/api/kg/stats
 ```bash
 PYTHONPATH=backend python -m unittest discover -s backend/tests
 node frontend/layout.test.js
+node frontend/workbench.test.js
+node frontend/credit-review.test.js
 ```
 
-前者执行259个后端单元测试，覆盖全部8个 Action、申请级流程编排、Action 输入摘要脱敏、手测数据目录枚举、Action 表单受控数据库检索、9个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。后者无需 npm 依赖，验证候选 HTML 页面结构、账号/权限/角色代码清除、真实 API 路径、字段化工作流表单、Action 输入输出详情、数据库字段回填、数据源脱敏分页预览、未接功能边界和运行表格文本转义。
+后端测试覆盖阶段1 characterization/golden 契约、全部 8 个 Action、运行模式回滚门禁、后端集中模型管理与密钥加密、有界多轮对话、外部模型鉴权门禁、LLM 结果总结与安全降级、多步骤只读 Agent、无效 Query 零 Action 契约、申请级流程编排、精确的 UAT 匿名只读边界、Action 输入摘要脱敏、手测数据目录枚举、Action 表单受控数据库检索、9 个 Function、本体 Git、八类 outbox、死信人工重放、熔断/告警/升级、Action 设计/控制、人工确认门禁、发布、版本、安全、数据质量、图查询和文档一致性。三个前端测试均无需 npm 依赖，分别验证本体建模界面、兼容工作台，以及以真实后端多轮对话、Query 拆解和 Action 调用为核心的个人信审 Agent 主界面。

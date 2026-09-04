@@ -1,23 +1,41 @@
 import json
+import logging
+from contextvars import ContextVar
+from datetime import datetime,timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID,uuid4
 
-from fastapi import APIRouter,HTTPException,Response
+from fastapi import APIRouter,HTTPException,Query,Request,Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel,ConfigDict
+from pydantic import BaseModel,ConfigDict,Field,SecretStr
 from ..core.config import *
 from ..postgres.client import PostgresService
 from ..postgres.business_lookup import BusinessLookupError,PersonalCreditBusinessLookup
 from ..kg.nebula import NebulaGraphService
-from ..llm.client import LLMClient
+from ..llm.client import (
+    LLMClient,
+    LLMTransientError,
+    normalize_llm_endpoint,
+    provider_catalog,
+)
+from ..llm.config_repository import (
+    LLMConfigurationConflict,
+    LLMConfigurationEncryptionError,
+    LLMConfigurationNotFound,
+    PostgresLLMConfigurationRepository,
+)
 from ..ontology.generator import generate
 from ..ontology.models import OntologyProposal
 from ..ontology.validator import validate
 from ..ontology.baseline import build_personal_credit_baseline
 from ..ontology.audit import audit_personal_credit_proposal
 from ..ontology.axiom_executor import axiom_executability,execute_axioms
-from ..core.security import mask_payload,mask_graph_snapshot
+from ..core.security import (
+    external_llm_auth_error,
+    mask_graph_snapshot,
+    mask_payload,
+)
 from ..ontology.versioning import VersionWorkflowError,review_release_candidate
 from ..ontology.version_repository import OntologyVersionRepository
 from ..ontology.git_repository import OntologyGitError,OntologyGitRepository
@@ -29,6 +47,23 @@ from ..action.execution import (
     ActionRequestError,
 )
 from ..action.execution_repository import PostgresActionExecutionRepository
+from ..action.action_design_catalog import (
+    ACTION_RUNTIME_DESIGNS,
+    validate_action_design_catalog,
+)
+from ..action.capabilities import (
+    ActionCapabilityContractError,
+    build_action_capability_catalog,
+)
+from ..action.business_functions import build_personal_credit_readonly_registry
+from ..action.reusable_actions import (
+    ONTOLOGY_PERSONAL_CREDIT,
+    PERSONAL_CREDIT_ACTION_REUSE_PROFILES,
+    ReusableActionAdapterRegistry,
+    ReusableActionNotFound,
+    ReusableActionRequestInvalid,
+    build_action_reuse_audit,
+)
 from ..action.outbox import OutboxError,PostgresActionOutboxRepository
 from ..action.outbox_replay import (
     OutboxReplayConflict,
@@ -97,6 +132,25 @@ from ..action.record_decision_recommendation import (
     RecordDecisionRecommendationActionService,
     RecordDecisionRecommendationError,
 )
+from ..action.function_data_adapter import (
+    FunctionDataAdapterError,
+    PersonalCreditFunctionDataAdapter,
+)
+from ..agent.personal_credit import (
+    AgentPlanningError,
+    PersonalCreditAgentService,
+    READ_ONLY_AGENT_TOOLS,
+)
+from ..agent.conversation import (
+    AgentConversationBusyError,
+    AgentConversationError,
+)
+from ..agent.runtime import (
+    AgentRuntimeUnavailableError,
+    build_personal_credit_agent_runtime,
+    personal_credit_agent_runtime_status,
+    require_personal_credit_agent_runtime,
+)
 from ..action.workflow import (
     WORKFLOW_ACTIONS,
     WORKFLOW_ACTION_LABELS,
@@ -109,20 +163,65 @@ from ..action.workflow import (
 )
 
 router=APIRouter()
+logger=logging.getLogger(__name__)
 def postgres(): return PostgresService(POSTGRES_HOST,POSTGRES_PORT,POSTGRES_DATABASE,POSTGRES_USER,POSTGRES_PASSWORD)
 def nebula(): return NebulaGraphService(NEBULA_HOST,NEBULA_PORT,NEBULA_USER,NEBULA_PASSWORD,NEBULA_SPACE)
 version_store=OntologyVersionRepository(postgres())
 ontology_git=OntologyGitRepository(postgres())
+_ACTION_ONTOLOGY_VERSION_OVERRIDE:ContextVar[str|None]=ContextVar(
+    "action_ontology_version_override",default=None
+)
 
 def error_detail(exc):
     message=str(exc).strip()
     return mask_payload(message or f"{type(exc).__name__}: 未提供详细错误信息")
 
 class LLMConfig(BaseModel):
-    api_key:str
-    base_url:str
-    model:str
-    temperature:float=0
+    model_config=ConfigDict(extra="forbid")
+    api_key:SecretStr=Field(min_length=1,max_length=4096)
+    base_url:str=Field(min_length=1,max_length=2048)
+    model:str=Field(min_length=1,max_length=160)
+    temperature:float=Field(default=0,ge=0,le=2)
+    provider:str=Field(default="openai_compatible",min_length=1,max_length=32)
+    api_version:str|None=Field(default=None,max_length=32)
+
+class LLMManagedConfigCreate(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    name:str=Field(min_length=1,max_length=80)
+    provider:str=Field(default="openai_compatible",min_length=1,max_length=32)
+    base_url:str=Field(default="",max_length=2048)
+    model:str=Field(min_length=1,max_length=160)
+    temperature:float=Field(default=0,ge=0,le=2)
+    api_version:str|None=Field(default=None,max_length=32)
+    api_key:SecretStr=Field(min_length=1,max_length=4096)
+
+class LLMManagedConfigUpdate(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    version:int=Field(ge=1)
+    name:str=Field(min_length=1,max_length=80)
+    provider:str=Field(default="openai_compatible",min_length=1,max_length=32)
+    base_url:str=Field(default="",max_length=2048)
+    model:str=Field(min_length=1,max_length=160)
+    temperature:float=Field(default=0,ge=0,le=2)
+    api_version:str|None=Field(default=None,max_length=32)
+    # Missing, null and blank all mean "retain the existing encrypted key".
+    api_key:SecretStr|None=Field(default=None,max_length=4096)
+
+class PersonalCreditAgentRunRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    application_id:str=Field(min_length=1,max_length=32)
+    instruction:str=Field(min_length=1,max_length=500)
+    ontology_version:str|None=Field(default=None,max_length=64)
+    execute:bool=True
+    max_steps:int=Field(default=1,ge=1,le=4)
+    conversation_id:str|None=Field(
+        default=None,pattern=r"^pc_[0-9a-f]{32}$"
+    )
+
+class PersonalCreditAgentToolRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    application_id:str=Field(min_length=1,max_length=32)
+    ontology_version:str|None=Field(default=None,max_length=64)
 
 class ProfileRequest(BaseModel):
     limit:int=20
@@ -324,6 +423,90 @@ def _external_circuit(service_postgres,dependency_name:str):
         open_seconds=EXTERNAL_CIRCUIT_OPEN_SECONDS,
     )
 
+def _llm_configuration_repository(service_postgres=None):
+    return PostgresLLMConfigurationRepository(
+        service_postgres or postgres(),LLM_CONFIG_ENCRYPTION_KEY
+    )
+
+def _secret_text(value:SecretStr|str|None)->str:
+    if isinstance(value,SecretStr):
+        return value.get_secret_value()
+    return str(value or "")
+
+def _llm_client_from_values(values)->LLMClient:
+    if isinstance(values,BaseModel):
+        values=values.model_dump()
+    payload=dict(values)
+    payload["api_key"]=_secret_text(payload.get("api_key"))
+    return LLMClient(**{
+        key:payload.get(key)
+        for key in (
+            "api_key","base_url","model","temperature","provider","api_version"
+        )
+    })
+
+def _normalize_managed_llm(values)->dict:
+    name=values.name.strip()
+    model=values.model.strip()
+    if not name:
+        raise ValueError("请填写模型配置名称")
+    if not model:
+        raise ValueError("请填写 LLM 模型名称")
+    provider,base_url=normalize_llm_endpoint(values.provider,values.base_url)
+    # Constructing without making a request validates model, temperature and
+    # provider-specific settings (including Azure API version).
+    validated=LLMClient(
+        api_key="validation-only",
+        provider=provider,
+        base_url=base_url,
+        model=model,
+        temperature=values.temperature,
+        api_version=values.api_version,
+    )
+    return {
+        "name":name,
+        "provider":validated.provider,
+        "base_url":validated.base_url,
+        "model":validated.model,
+        "temperature":validated.temperature,
+        "api_version":(
+            validated.api_version if validated.provider=="azure_openai" else None
+        ),
+    }
+
+def _raise_llm_configuration_http(error):
+    if isinstance(error,LLMConfigurationNotFound):
+        raise HTTPException(404,error_detail(error))
+    if isinstance(error,LLMConfigurationConflict):
+        raise HTTPException(409,error_detail(error))
+    if isinstance(error,LLMConfigurationEncryptionError):
+        raise HTTPException(503,error_detail(error))
+    if isinstance(error,ValueError):
+        raise HTTPException(422,error_detail(error))
+    # Database/extension/driver failures are infrastructure failures. Do not
+    # mislabel them as user input or expose connection/SQL diagnostics.
+    logger.exception("LLM configuration operation failed")
+    raise HTTPException(503,"模型配置服务暂不可用，请稍后重试")
+
+def _store_llm_test_result(
+    repository,configuration_id:str,runtime:dict,*,success:bool,error=None
+):
+    try:
+        return repository.mark_test_result(
+            configuration_id,tested_version=runtime["version"],
+            success=success,error=error,
+        )
+    except Exception as storage_error:
+        _raise_llm_configuration_http(storage_error)
+
+def _record_llm_circuit_failure(circuit,code:str,detail):
+    if not circuit:
+        return
+    try:
+        circuit.record_failure(code,detail)
+    except Exception as storage_error:
+        _raise_llm_configuration_http(storage_error)
+
 def _workflow_repository(service_postgres=None):
     return PostgresPersonalCreditWorkflowRepository(
         service_postgres or postgres(),
@@ -341,7 +524,7 @@ def _workflow_http_status(code:str)->int:
         "WORKFLOW_APPLICATION_ALREADY_EXISTS","WORKFLOW_NOT_READY",
         "WORKFLOW_STEP_NOT_READY","WORKFLOW_STEP_CONFLICT",
         "WORKFLOW_STEP_REQUIRED","WORKFLOW_TERMINAL",
-        "WORKFLOW_ACTION_IN_PROGRESS",
+        "WORKFLOW_ACTION_IN_PROGRESS","WORKFLOW_ONTOLOGY_VERSION_UNAVAILABLE",
     }: return 409
     return 500
 
@@ -353,6 +536,13 @@ def _raise_workflow_http(error:WorkflowError):
 
 def _proposal_from_record(record):
     return OntologyProposal.model_validate(record["proposal"])
+
+def published_version_proposal(version:str):
+    ensure_version_registry()
+    record=version_store.get(str(version or "").strip())
+    if record["status"]!="published":
+        raise VersionWorkflowError(f"本体版本尚未发布：{version}")
+    return _proposal_from_record(record)
 
 def ensure_version_registry():
     if version_store.count(): return
@@ -367,9 +557,48 @@ def ensure_version_registry():
     version_store.bootstrap(proposal,audit,active)
 
 def active_version_proposal():
+    overridden_version=_ACTION_ONTOLOGY_VERSION_OVERRIDE.get()
+    if overridden_version:
+        return published_version_proposal(overridden_version)
     ensure_version_registry()
     active=version_store.active()
     return _proposal_from_record(active) if active else build_personal_credit_baseline()
+
+def _agent_proposal(ontology_version:str|None):
+    return (
+        published_version_proposal(ontology_version)
+        if ontology_version and ontology_version.strip()
+        else active_version_proposal()
+    )
+
+def _personal_credit_agent(ontology_version:str|None):
+    def legacy_factory():
+        proposal=_agent_proposal(ontology_version)
+        return PersonalCreditAgentService(
+            PersonalCreditFunctionDataAdapter(
+                postgres(),nebula,proposal=proposal
+            ),
+            ontology_version=proposal.version,
+        )
+
+    return build_personal_credit_agent_runtime(
+        mode=PERSONAL_CREDIT_AGENT_MODE,
+        legacy_factory=legacy_factory,
+    )
+
+
+def _agent_runtime_mode_or_http():
+    try:
+        return require_personal_credit_agent_runtime(
+            PERSONAL_CREDIT_AGENT_MODE
+        )
+    except AgentRuntimeUnavailableError as error:
+        raise HTTPException(503,{
+            "code":error.code,
+            "message":error_detail(error),
+            "agent_mode":error.mode.value,
+            "rollback_mode":"legacy",
+        }) from error
 
 def ensure_ontology_git():
     ontology_git.bootstrap(active_version_proposal())
@@ -830,7 +1059,7 @@ async def get_action_execution(execution_id:str):
     except ActionExecutionNotFound as e:
         raise HTTPException(404,error_detail(e))
 
-_WORKFLOW_ACTION_EXECUTORS = {
+_PERSONAL_CREDIT_ACTION_ADAPTERS = {
     "create_loan_application": (
         CreateLoanApplicationRequest,execute_create_loan_application
     ),
@@ -857,14 +1086,205 @@ _WORKFLOW_ACTION_EXECUTORS = {
     ),
 }
 
+_ACTION_ADAPTER_REGISTRY = ReusableActionAdapterRegistry()
+for _action_name,(_request_model,_executor) in _PERSONAL_CREDIT_ACTION_ADAPTERS.items():
+    _ACTION_ADAPTER_REGISTRY.register(
+        ontology_id=ONTOLOGY_PERSONAL_CREDIT,
+        ontology_version="*",
+        action_name=_action_name,
+        request_model=_request_model,
+        executor=_executor,
+        profile=PERSONAL_CREDIT_ACTION_REUSE_PROFILES[_action_name],
+    )
+
+_READ_ONLY_FUNCTION_REGISTRY = build_personal_credit_readonly_registry()
+
+
+def _personal_credit_action_capability_catalog(proposal:OntologyProposal):
+    return build_action_capability_catalog(
+        ontology_id=ONTOLOGY_PERSONAL_CREDIT,
+        proposal=proposal,
+        adapter_registry=_ACTION_ADAPTER_REGISTRY,
+        expected_write_bindings=_PERSONAL_CREDIT_ACTION_ADAPTERS,
+        read_tools=READ_ONLY_AGENT_TOOLS,
+        read_request_model=PersonalCreditAgentToolRequest,
+        read_executor=PersonalCreditAgentService.execute_tool,
+        read_function_registry=_READ_ONLY_FUNCTION_REGISTRY,
+    )
+
+
+@router.get("/actions/reuse-catalog")
+async def action_reuse_catalog():
+    return {
+        **build_action_reuse_audit(),
+        "registered_ontologies":[ONTOLOGY_PERSONAL_CREDIT],
+    }
+
+
+@router.get("/ontologies/{ontology_id}/actions")
+async def list_registered_ontology_actions(ontology_id:str):
+    try:
+        proposal=active_version_proposal()
+        _require_registered_action_version(
+            ontology_id,proposal.version,action_name=None
+        )
+        return _ACTION_ADAPTER_REGISTRY.describe(
+            ontology_id,ontology_version=proposal.version
+        )
+    except ReusableActionNotFound as error:
+        raise HTTPException(404,error_detail(error))
+    except VersionWorkflowError as error:
+        raise HTTPException(409,error_detail(error))
+
+
+@router.get("/ontologies/{ontology_id}/versions/{ontology_version}/actions")
+async def list_registered_ontology_version_actions(
+    ontology_id:str,ontology_version:str
+):
+    try:
+        _require_registered_action_version(
+            ontology_id,ontology_version,action_name=None
+        )
+        return _ACTION_ADAPTER_REGISTRY.describe(
+            ontology_id,ontology_version=ontology_version
+        )
+    except ReusableActionNotFound as error:
+        raise HTTPException(404,error_detail(error))
+    except VersionWorkflowError as error:
+        raise HTTPException(409,error_detail(error))
+
+
+def _require_registered_action_version(
+    ontology_id:str,ontology_version:str,action_name:str|None
+):
+    if ontology_id!=ONTOLOGY_PERSONAL_CREDIT:
+        if action_name:
+            _ACTION_ADAPTER_REGISTRY.resolve(
+                ontology_id,action_name,ontology_version=ontology_version
+            )
+        else:
+            _ACTION_ADAPTER_REGISTRY.describe(
+                ontology_id,ontology_version=ontology_version
+            )
+        raise VersionWorkflowError(
+            f"本体版本仓储尚未绑定：{ontology_id}.{ontology_version}"
+        )
+    proposal=published_version_proposal(ontology_version)
+    runtime_errors=_action_runtime_compatibility_errors(proposal)
+    if runtime_errors:
+        raise VersionWorkflowError(
+            "本体版本与当前 Action 运行合同不兼容："
+            +"；".join(runtime_errors)
+        )
+    names={item.name for item in proposal.action_types}
+    if action_name:
+        _ACTION_ADAPTER_REGISTRY.resolve(
+            ontology_id,action_name,ontology_version=ontology_version
+        )
+        if action_name not in names:
+            raise VersionWorkflowError(
+                f"本体版本未声明 Action：{ontology_version}.{action_name}"
+            )
+    return proposal
+
+
+def _action_runtime_compatibility_errors(proposal:OntologyProposal)->list[str]:
+    errors=list(validate_action_design_catalog(proposal))
+    try:
+        _personal_credit_action_capability_catalog(proposal)
+    except ActionCapabilityContractError as error:
+        errors.extend(error.errors)
+    for action_name,design in ACTION_RUNTIME_DESIGNS.items():
+        try:
+            request_model=_ACTION_ADAPTER_REGISTRY.request_model(
+                ONTOLOGY_PERSONAL_CREDIT,action_name,
+                ontology_version=proposal.version,
+            )
+        except ReusableActionNotFound:
+            errors.append(f"Action 缺少运行适配器：{action_name}")
+            continue
+        if set(request_model.model_fields)!=set(design.request_fields):
+            errors.append(f"Action 请求模型与运行合同不兼容：{action_name}")
+    return list(dict.fromkeys(errors))
+
+
+async def _execute_registered_action_version(
+    ontology_id:str,ontology_version:str,action_name:str,payload:dict[str,Any]
+):
+    _require_registered_action_version(
+        ontology_id,ontology_version,action_name=action_name
+    )
+    token=_ACTION_ONTOLOGY_VERSION_OVERRIDE.set(ontology_version)
+    try:
+        return await _ACTION_ADAPTER_REGISTRY.execute(
+            ontology_id,action_name,payload,
+            ontology_version=ontology_version,
+        )
+    finally:
+        _ACTION_ONTOLOGY_VERSION_OVERRIDE.reset(token)
+
+
+@router.post("/ontologies/{ontology_id}/actions/{action_name}/execute")
+async def execute_registered_ontology_action(
+    ontology_id:str,action_name:str,payload:dict[str,Any]
+):
+    try:
+        proposal=active_version_proposal()
+        return await _execute_registered_action_version(
+            ontology_id,proposal.version,action_name,payload
+        )
+    except ReusableActionNotFound as error:
+        raise HTTPException(404,error_detail(error))
+    except ReusableActionRequestInvalid as error:
+        raise HTTPException(422,mask_payload({
+            "code":"ACTION_REQUEST_INVALID",
+            "message":error_detail(error),
+            "errors":error.errors,
+        }))
+    except VersionWorkflowError as error:
+        raise HTTPException(409,mask_payload({
+            "code":"ACTION_ONTOLOGY_VERSION_INCOMPATIBLE",
+            "message":error_detail(error),
+        }))
+
+
+@router.post(
+    "/ontologies/{ontology_id}/versions/{ontology_version}/actions/"
+    "{action_name}/execute"
+)
+async def execute_registered_ontology_version_action(
+    ontology_id:str,ontology_version:str,action_name:str,payload:dict[str,Any]
+):
+    try:
+        return await _execute_registered_action_version(
+            ontology_id,ontology_version,action_name,payload
+        )
+    except ReusableActionNotFound as error:
+        raise HTTPException(404,error_detail(error))
+    except ReusableActionRequestInvalid as error:
+        raise HTTPException(422,mask_payload({
+            "code":"ACTION_REQUEST_INVALID",
+            "message":error_detail(error),
+            "errors":error.errors,
+        }))
+    except VersionWorkflowError as error:
+        raise HTTPException(409,mask_payload({
+            "code":"ACTION_ONTOLOGY_VERSION_INCOMPATIBLE",
+            "message":error_detail(error),
+        }))
+
 def _workflow_action_payload(
     *,
     action_name:str,
     payload:dict[str,Any],
     application_id:str,
     dispatch_request_id:str,
+    ontology_version:str,
 ):
-    model_type,_executor=_WORKFLOW_ACTION_EXECUTORS[action_name]
+    model_type=_ACTION_ADAPTER_REGISTRY.request_model(
+        ONTOLOGY_PERSONAL_CREDIT,action_name,
+        ontology_version=ontology_version,
+    )
     normalized=dict(payload)
     if "application_id" in model_type.model_fields:
         supplied=normalized.get("application_id")
@@ -950,8 +1370,11 @@ async def list_personal_credit_workflows(
 
 @router.get("/workflows/personal-credit/definition")
 async def personal_credit_workflow_definition():
+    proposal=active_version_proposal()
     return {
         "workflow_version":"personal-credit-workflow-v1",
+        "ontology_id":ONTOLOGY_PERSONAL_CREDIT,
+        "ontology_version":proposal.version,
         "statuses":WORKFLOW_STATUSES,
         "recommendation_only_assertion":RECOMMENDATION_ONLY_ASSERTION,
         "actions":[
@@ -962,8 +1385,19 @@ async def personal_credit_workflow_definition():
                 "dependencies":WORKFLOW_DEPENDENCIES[action_name],
                 "optional":action_name in OPTIONAL_WORKFLOW_ACTIONS,
                 "request_fields":list(
-                    _WORKFLOW_ACTION_EXECUTORS[action_name][0].model_fields
+                    _ACTION_ADAPTER_REGISTRY.request_model(
+                        ONTOLOGY_PERSONAL_CREDIT,action_name,
+                        ontology_version=proposal.version,
+                    ).model_fields
                 ),
+                "archetype":_ACTION_ADAPTER_REGISTRY.resolve(
+                    ONTOLOGY_PERSONAL_CREDIT,action_name,
+                    ontology_version=proposal.version,
+                ).profile.archetype,
+                "reuse_mode":_ACTION_ADAPTER_REGISTRY.resolve(
+                    ONTOLOGY_PERSONAL_CREDIT,action_name,
+                    ontology_version=proposal.version,
+                ).profile.reuse_mode,
             }
             for position,action_name in enumerate(WORKFLOW_ACTIONS,start=1)
         ],
@@ -1011,12 +1445,25 @@ async def execute_personal_credit_workflow_step(
     try:
         detail=repository.get(workflow_id)
         workflow=detail["workflow"]
+        pinned_ontology_version=workflow["ontology_version"]
+        try:
+            _require_registered_action_version(
+                ONTOLOGY_PERSONAL_CREDIT,
+                pinned_ontology_version,
+                action_name=action_name,
+            )
+        except (ReusableActionNotFound,VersionWorkflowError) as error:
+            raise WorkflowError(
+                "WORKFLOW_ONTOLOGY_VERSION_UNAVAILABLE",
+                f"流程锁定的本体版本不可执行：{error}",
+            ) from error
         dispatch_request_id=f"wf-{uuid4()}"
         model=_workflow_action_payload(
             action_name=action_name,
             payload=req.payload,
             application_id=workflow["application_id"],
             dispatch_request_id=dispatch_request_id,
+            ontology_version=pinned_ontology_version,
         )
         model_payload=model.model_dump(mode="json")
         input_summary=model.model_dump(mode="json",exclude_none=True)
@@ -1029,9 +1476,16 @@ async def execute_personal_credit_workflow_step(
             input_summary=input_summary,
             actor_id=MVP_WORKFLOW_ACTOR_ID,
         )
-        _model_type,executor=_WORKFLOW_ACTION_EXECUTORS[action_name]
         try:
-            result=_workflow_action_result(await executor(model))
+            token=_ACTION_ONTOLOGY_VERSION_OVERRIDE.set(pinned_ontology_version)
+            try:
+                action_value=await _ACTION_ADAPTER_REGISTRY.execute_model(
+                    ONTOLOGY_PERSONAL_CREDIT,action_name,model,
+                    ontology_version=pinned_ontology_version,
+                )
+            finally:
+                _ACTION_ONTOLOGY_VERSION_OVERRIDE.reset(token)
+            result=_workflow_action_result(action_value)
         except HTTPException as action_error:
             detail_value=action_error.detail
             action_detail=detail_value if isinstance(detail_value,dict) else {}
@@ -1270,6 +1724,19 @@ async def health():
     finally:
         n.close()
 
+@router.get("/auth/check")
+async def check_mvp_authentication(request:Request):
+    """Return the authentication mode resolved by the shared middleware."""
+    expires_at=getattr(request.state,"mvp_auth_expires_at",None)
+    return {
+        "authenticated":bool(getattr(request.state,"mvp_authenticated",False)),
+        "mode":getattr(request.state,"mvp_auth_mode",None),
+        "expires_at":(
+            datetime.fromtimestamp(expires_at,tz=timezone.utc).isoformat()
+            if expires_at is not None else None
+        ),
+    }
+
 @router.get("/postgres/schema")
 async def schema():
     return postgres().schema()
@@ -1285,11 +1752,132 @@ async def postgres_data(table:str,limit:int=100,offset:int=0):
     except ValueError as e:
         raise HTTPException(400,error_detail(e))
 
+@router.get("/llm/configs")
+async def list_llm_configurations():
+    try:
+        items=_llm_configuration_repository().list_configs()
+        active=next((item["id"] for item in items if item["is_active"]),None)
+        return {
+            "items":items,
+            "active_config_id":active,
+            "providers":provider_catalog(),
+        }
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
+@router.post("/llm/configs",status_code=201)
+async def create_llm_configuration(req:LLMManagedConfigCreate):
+    try:
+        values=_normalize_managed_llm(req)
+        api_key=_secret_text(req.api_key).strip()
+        if not api_key:
+            raise ValueError("请填写 LLM API Key")
+        return _llm_configuration_repository().create(
+            **values,api_key=api_key
+        )
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
+@router.put("/llm/configs/{configuration_id}")
+async def update_llm_configuration(
+    configuration_id:UUID,req:LLMManagedConfigUpdate
+):
+    try:
+        values=_normalize_managed_llm(req)
+        api_key=_secret_text(req.api_key).strip() if req.api_key else None
+        return _llm_configuration_repository().update(
+            str(configuration_id),**values,api_key=api_key,
+            expected_version=req.version,
+        )
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
+@router.post("/llm/configs/{configuration_id}/test")
+async def test_llm_configuration(configuration_id:UUID):
+    repository=_llm_configuration_repository()
+    circuit=None
+    runtime=None
+    request_started=False
+    provider_completed=False
+    configuration_id_text=str(configuration_id)
+    try:
+        runtime=repository.get_runtime(configuration_id_text)
+        client=_llm_client_from_values(runtime)
+        circuit=_external_circuit(postgres(),"llm-service")
+        circuit.before_call()
+        request_started=True
+        await client.test()
+        provider_completed=True
+        circuit.record_success()
+        return _store_llm_test_result(
+            repository,configuration_id_text,runtime,success=True
+        )
+    except (LLMConfigurationNotFound,LLMConfigurationConflict,
+            LLMConfigurationEncryptionError) as error:
+        _raise_llm_configuration_http(error)
+    except ExternalCircuitOpenError as error:
+        # No provider request was attempted, so do not count another failure or
+        # invalidate a previously verified configuration.
+        raise HTTPException(503,error_detail(error))
+    except LLMTransientError as error:
+        detail=error_detail(error)
+        _record_llm_circuit_failure(
+            circuit,"LLM_CONFIGURATION_TEST_TRANSIENT",detail
+        )
+        if runtime:
+            _store_llm_test_result(
+                repository,configuration_id_text,runtime,
+                success=False,error=detail,
+            )
+        raise HTTPException(503,detail)
+    except Exception as error:
+        if isinstance(error,HTTPException):
+            raise
+        if provider_completed or not request_started:
+            _raise_llm_configuration_http(error)
+        detail=error_detail(error)
+        _record_llm_circuit_failure(
+            circuit,"LLM_CONFIGURATION_TEST_FAILED",detail
+        )
+        if runtime:
+            _store_llm_test_result(
+                repository,configuration_id_text,runtime,
+                success=False,error=detail,
+            )
+        raise HTTPException(422,detail)
+
+@router.post("/llm/configs/{configuration_id}/activate")
+async def activate_llm_configuration(configuration_id:UUID):
+    try:
+        return _llm_configuration_repository().activate(str(configuration_id))
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
+@router.post("/llm/configs/{configuration_id}/deactivate")
+async def deactivate_llm_configuration(configuration_id:UUID):
+    try:
+        return _llm_configuration_repository().deactivate(str(configuration_id))
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
+@router.delete("/llm/configs/{configuration_id}")
+async def delete_llm_configuration(
+    configuration_id:UUID,version:int=Query(...,ge=1)
+):
+    try:
+        configuration_id_text=str(configuration_id)
+        _llm_configuration_repository().delete(
+            configuration_id_text,expected_version=version
+        )
+        return {"deleted":True,"id":configuration_id_text}
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+
 @router.post("/llm/test")
 async def llm_test(cfg:LLMConfig):
     circuit=None
     try:
-        client=LLMClient(**cfg.model_dump())
+        client=_llm_client_from_values(cfg)
         service_postgres=postgres()
         circuit=_external_circuit(service_postgres,"llm-service")
         circuit.before_call()
@@ -1303,12 +1891,170 @@ async def llm_test(cfg:LLMConfig):
             circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
         raise HTTPException(400,error_detail(e))
 
+@router.get("/agents/personal-credit/tools")
+async def personal_credit_agent_tools():
+    return {
+        "tools":PersonalCreditAgentService.catalog(),
+        "agent_runtime":personal_credit_agent_runtime_status(
+            PERSONAL_CREDIT_AGENT_MODE
+        ).public(),
+        "execution_boundary":{
+            "read_only_only":True,
+            "raw_sql_allowed":False,
+            "business_writes_allowed":False,
+            "final_approval_allowed":False,
+        },
+        "planning_boundary":{
+            "max_steps":4,
+            "default_steps":1,
+            "execution_mode":"sequential",
+            "response_types":["CHAT","NEEDS_CLARIFICATION","ACTION_PLAN"],
+            "multi_turn":True,
+            "conversation":{
+                "storage":"in_memory",
+                "ttl_seconds":1800,
+                "max_context_turns":8,
+                "scope_bound_to":["application_id","ontology_version"],
+                "single_inflight_turn":True,
+            },
+            "result_synthesis":"single_call_llm_with_deterministic_fallback",
+            "max_llm_calls_per_turn":1,
+            "explicit_business_routing":"deterministic_then_llm_synthesis",
+            "model_planner_result":"deterministic",
+            "execution_semantics":"same_snapshot_independent",
+            "response_contract":["answer","final_answer","trace","synthesis"],
+            "trace_policy":{
+                "stages":["planner","readiness","action","synthesis","fallback"],
+                "contains_reasoning":False,
+                "contains_sensitive_data":False,
+            },
+            "model_arguments_allowed":False,
+            "write_actions_are_proposals_only":True,
+            "unrecognized_instruction":"NO_ACTION",
+            "clarification_status":"NEEDS_CLARIFICATION",
+        },
+    }
+
+@router.get("/agents/personal-credit/{application_id}/readiness")
+async def personal_credit_agent_readiness(
+    application_id:str,ontology_version:str|None=None
+):
+    try:
+        _agent_runtime_mode_or_http()
+        service=_personal_credit_agent(ontology_version)
+        return service.inspect_case_readiness(application_id)
+    except (VersionWorkflowError,FunctionDataAdapterError,ValueError) as e:
+        raise HTTPException(422,error_detail(e))
+
+@router.post("/agents/personal-credit/tools/{tool_name}/execute")
+async def execute_personal_credit_agent_tool(
+    tool_name:str,req:PersonalCreditAgentToolRequest
+):
+    if tool_name not in READ_ONLY_AGENT_TOOLS:
+        raise HTTPException(404,"只读 Agent 工具不存在")
+    try:
+        _agent_runtime_mode_or_http()
+        service=_personal_credit_agent(req.ontology_version)
+        return {
+            "tool":tool_name,
+            "read_only":True,
+            "result":service.execute_tool(req.application_id,tool_name),
+        }
+    except (VersionWorkflowError,FunctionDataAdapterError,AgentPlanningError,ValueError) as e:
+        raise HTTPException(422,error_detail(e))
+
+@router.post("/agents/personal-credit/run")
+async def run_personal_credit_agent(
+    req:PersonalCreditAgentRunRequest,request:Request
+):
+    # The reserved ontology mode must fail before model-configuration schema
+    # setup, credential access, Agent construction, or any Action execution.
+    agent_mode=_agent_runtime_mode_or_http()
+    # Inspect only non-secret metadata first. An anonymous UAT request is
+    # rejected before the active key is decrypted or a client is constructed.
+    managed_repository=_llm_configuration_repository()
+    try:
+        active_metadata=managed_repository.active_metadata()
+    except Exception as error:
+        _raise_llm_configuration_http(error)
+    auth_error=external_llm_auth_error(
+        MVP_API_KEY,request.headers.get("X-API-Key"),
+        active_metadata is not None,
+        authenticated=bool(getattr(request.state,"mvp_authenticated",False)),
+    )
+    if auth_error:
+        raise HTTPException(*auth_error)
+    circuit=None
+    try:
+        service=_personal_credit_agent(req.ontology_version)
+        if active_metadata is not None:
+            runtime=managed_repository.active_runtime()
+            client=_llm_client_from_values(runtime) if runtime else None
+        else:
+            client=None
+        if client:
+            circuit=_external_circuit(postgres(),"llm-service")
+            circuit.before_call()
+        result=await service.run(
+            req.application_id,
+            req.instruction,
+            llm_client=client,
+            execute=req.execute,
+            max_steps=req.max_steps,
+            conversation_id=req.conversation_id,
+        )
+        result["agent_mode"]=agent_mode.value
+        synthesis=result.get("synthesis") or {}
+        log_method=logger.warning if result.get("degraded") else logger.info
+        log_method(
+            "personal-credit agent completed mode=%s response_type=%s execution_status=%s "
+            "synthesis_status=%s synthesis_reason=%s model_calls=%s",
+            agent_mode.value,
+            result.get("response_type"),
+            (result.get("execution_summary") or {}).get("status"),
+            synthesis.get("status"),
+            synthesis.get("reason_code"),
+            result.get("model_calls"),
+        )
+        model_quality_failed=(
+            synthesis.get("status")=="FALLBACK"
+            and bool(synthesis.get("model_called"))
+        )
+        if circuit and model_quality_failed:
+            reason_code=str(
+                synthesis.get("reason_code") or "MODEL_RESPONSE_DEGRADED"
+            )[:64]
+            circuit.record_failure(
+                "AGENT_MODEL_QUALITY_DEGRADED",
+                "模型响应未通过质量门禁："+reason_code,
+            )
+        elif circuit:
+            circuit.record_success()
+        return result
+    except ExternalCircuitOpenError as e:
+        raise HTTPException(503,error_detail(e))
+    except AgentConversationBusyError as e:
+        raise HTTPException(409,error_detail(e))
+    except AgentConversationError as e:
+        raise HTTPException(422,error_detail(e))
+    except (LLMConfigurationNotFound,LLMConfigurationConflict,
+            LLMConfigurationEncryptionError) as e:
+        _raise_llm_configuration_http(e)
+    except (VersionWorkflowError,FunctionDataAdapterError,AgentPlanningError,ValueError) as e:
+        if circuit:
+            circuit.record_failure("AGENT_PLANNING_FAILED",error_detail(e))
+        raise HTTPException(422,error_detail(e))
+    except Exception as e:
+        if circuit:
+            circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
+        raise HTTPException(400,error_detail(e))
+
 @router.post("/ontology/generate")
 async def gen(req:GenerateRequest):
     circuit=None
     try:
         prof=postgres().profile(min(req.limit,5))
-        client=LLMClient(**req.llm.model_dump())
+        client=_llm_client_from_values(req.llm)
         circuit=_external_circuit(postgres(),"llm-service")
         circuit.before_call()
         p=await generate(client,prof)
@@ -1499,6 +2245,12 @@ def _switch_published_version(version:str,action:str):
         if current and current["version"]==version:
             raise VersionWorkflowError(f"版本 {version} 已经是当前活动版本")
         proposal=_proposal_from_record(target); previous=_proposal_from_record(current) if current else None
+        runtime_errors=_action_runtime_compatibility_errors(proposal)
+        if runtime_errors:
+            raise VersionWorkflowError(
+                "目标版本与当前 Action 运行合同不兼容："
+                +"；".join(runtime_errors)
+            )
         profile=postgres().validation_profile()
         audit=review_release_candidate(proposal,profile,previous)
         if not audit["valid"]:
