@@ -1,0 +1,124 @@
+{
+  "allowlist_revision": "personal-credit-agent-allowlist-v1",
+  "capabilities": {
+    "create_loan_application": {
+      "model_contract_sha256": "660928f14d8f0ba849b63ab39436083d2bcf210c0d9c962ba876d273869c6485",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "create_phone_verification_task": {
+      "model_contract_sha256": "93eb707ad0f01a3b781cc2235c527d51f03cbd23e90b9d830948a12eeb5ce539",
+      "model_input_fields": [
+        "trigger_reason"
+      ],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "generate_decision_support": {
+      "model_contract_sha256": "404f371ec95e64c623089a41c647ef99ca5c8362bc4b1952b08a3a3f7c7937a1",
+      "model_input_fields": [],
+      "operation": "READ",
+      "proposal_only": false,
+      "risk": "HIGH"
+    },
+    "generate_risk_assessment": {
+      "model_contract_sha256": "a0680fdb7e8fa2117b2d70a54ca6d72b1dc87eefe9a0efb3324363a5782845a4",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "generate_verification_questions": {
+      "model_contract_sha256": "53dad6fe1cf16c089a06d4fad7bcb0a740a1808444b66f2b38f93296365429e6",
+      "model_input_fields": [],
+      "operation": "READ",
+      "proposal_only": false,
+      "risk": "MEDIUM"
+    },
+    "inspect_case_readiness": {
+      "model_contract_sha256": "cf72a80dc93c034ac1e3052842c6eca59a3dafe37c3d3b59a9745f7beab46764",
+      "model_input_fields": [],
+      "operation": "READ",
+      "proposal_only": false,
+      "risk": "LOW"
+    },
+    "preview_risk_assessment": {
+      "model_contract_sha256": "1e6024429f35d637c07e82bde4479363e6ae52141688d1419ecd77e89a28fe5e",
+      "model_input_fields": [],
+      "operation": "READ",
+      "proposal_only": false,
+      "risk": "MEDIUM"
+    },
+    "record_decision_recommendation": {
+      "model_contract_sha256": "87ace06c953a734778e723f229c00dfa49ca979ce9346707aa4e8cae5cc0ad1c",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "CRITICAL"
+    },
+    "record_phone_verification": {
+      "model_contract_sha256": "2af52a5be0a2d4b33d0a41f2b214493659ae965a5cc9d6c322d04bac7fb4246a",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "request_credit_report": {
+      "model_contract_sha256": "689eea192628b5e9ff6fcd2003ce60aa3b33d7af3e54bb0ad5100db673403dde",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "request_fraud_report": {
+      "model_contract_sha256": "489f8ddf5dc49126fc7cfd747ec70143e51942b2706073e516b8fff089699f3d",
+      "model_input_fields": [],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    },
+    "trigger_manual_review": {
+      "model_contract_sha256": "7b06cc9f9e9884ce33dddfaae8134fb15b0068a282562535ea4dbc45b3c4f6b7",
+      "model_input_fields": [
+        "review_reason"
+      ],
+      "operation": "WRITE",
+      "proposal_only": true,
+      "risk": "HIGH"
+    }
+  },
+  "capability_count": 12,
+  "catalog_digest": "97d8561cefa23a1fc3a59507a125b86f63f3b85aa4b1fc007b7b85ded4d4e616",
+  "context": {
+    "context_id": "ctx_2xKoOihzgio8Uin7gGjdAwZ8PBuBDVFfbP910s7qvlo",
+    "data_binding_digest": "17677960f0d58ed19594951e279fa268c4afff89efa68557b6b08704b0e17e5f",
+    "ontology_digest": "61c74ca6b174266651c59c88c2471fcb764d05cc23b8916a935cbd445070ed2e",
+    "ontology_id": "personal-credit",
+    "ontology_version": "1.1.0"
+  },
+  "direct_write_execution_enabled": false,
+  "final_approval": false,
+  "manifest_id": "acm_c9d150c6f4c3bc221e222908d08042d82c96d2928eaf717454772a09b6975873",
+  "manifest_sha256": "869bff6fd557da667333b999eb59a6ab50b5c6845b688df17f8419bfbf2d2e63",
+  "manifest_version": "1.0",
+  "order": [
+    "create_loan_application",
+    "request_credit_report",
+    "request_fraud_report",
+    "generate_risk_assessment",
+    "create_phone_verification_task",
+    "record_phone_verification",
+    "trigger_manual_review",
+    "record_decision_recommendation",
+    "inspect_case_readiness",
+    "preview_risk_assessment",
+    "generate_verification_questions",
+    "generate_decision_support"
+  ],
+  "policy_revision": "personal-credit-agent-policy-v1",
+  "principal_scope_digest": "f60dfaa8c0228dc17ce2a5f663b3850abb2bbcd8ccdc83312b6da04f964ca344",
+  "read_projection_attestation_id_sha256": "d26553f144ab1a06a07410d7c864aeaa69a8101b579e7d075d6ca3e6e3edae21"
+}

@@ -19,6 +19,24 @@ from .runtime import (
     personal_credit_agent_runtime_status,
     require_personal_credit_agent_runtime,
 )
+from .ontology_context import (
+    OntologyContextError,
+    OntologyContextProvider,
+    OntologyModelSlice,
+    PublishedOntologyContext,
+)
+from .capability_registry import (
+    AgentAuthenticationSource,
+    AgentCapabilityAllowlist,
+    AgentCapabilityDecision,
+    AgentCapabilityManifest,
+    AgentCapabilityRegistry,
+    AgentCapabilityRegistryError,
+    AgentDynamicPolicy,
+    AgentPrincipalContext,
+    AuthorizedCapabilityDecision,
+    PublishedReadProjectionAttestation,
+)
 
 __all__ = (
     "AgentPlanningError",
@@ -34,4 +52,18 @@ __all__ = (
     "build_personal_credit_agent_runtime",
     "personal_credit_agent_runtime_status",
     "require_personal_credit_agent_runtime",
+    "OntologyContextError",
+    "OntologyContextProvider",
+    "OntologyModelSlice",
+    "PublishedOntologyContext",
+    "AgentAuthenticationSource",
+    "AgentCapabilityAllowlist",
+    "AgentCapabilityDecision",
+    "AgentCapabilityManifest",
+    "AgentCapabilityRegistry",
+    "AgentCapabilityRegistryError",
+    "AgentDynamicPolicy",
+    "AgentPrincipalContext",
+    "AuthorizedCapabilityDecision",
+    "PublishedReadProjectionAttestation",
 )

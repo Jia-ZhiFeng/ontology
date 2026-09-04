@@ -1,5 +1,6 @@
 import json
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -203,6 +204,39 @@ class FunctionDataAdapterTests(unittest.TestCase):
             '"application"."requested_amount" AS "loan_amount"', sql
         )
         self.assertEqual(snapshot.data_binding_version, "1.2.0")
+
+    def test_shared_snapshot_rejects_application_version_and_binding_drift(self):
+        adapter, _postgres, _graph = self.make_adapter()
+        snapshot = adapter.load_postgres_snapshot("APP20260801000001")
+
+        self.assertIs(
+            adapter.resolve_postgres_snapshot(
+                "APP20260801000001", snapshot
+            ),
+            snapshot,
+        )
+        mismatches = (
+            (
+                "APP20260801000002",
+                snapshot,
+                "共享快照与当前贷款申请不匹配",
+            ),
+            (
+                "APP20260801000001",
+                replace(snapshot, data_binding_version="1.2.0"),
+                "共享快照与当前本体数据绑定版本不匹配",
+            ),
+            (
+                "APP20260801000001",
+                replace(snapshot, data_binding_digest="0" * 64),
+                "共享快照与当前本体数据绑定摘要不匹配",
+            ),
+        )
+        for application_id, candidate, message in mismatches:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                FunctionDataAdapterError, message
+            ):
+                adapter.resolve_postgres_snapshot(application_id, candidate)
 
     def test_execute_all_runs_every_function_without_business_write(self):
         adapter, postgres, graph = self.make_adapter()

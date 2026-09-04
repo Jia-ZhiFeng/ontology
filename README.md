@@ -19,6 +19,8 @@ Action 层分层、统一返回信封和 Function 注册中心边界见 `PERSONA
 
 阶段2的统一 `ActionCapability` 内部合同见 `PERSONAL_CREDIT_ACTION_CAPABILITY.md`。业务 `ActionType` 仍为 8 个 WRITE；4 个 legacy 只读工具以 `PROJECTED` 能力记录过渡，因此标准目录为 8 WRITE + 4 READ，但只读记录不计入业务 Action 数。完整目录含内部 Schema 和 runtime binding，当前不直接暴露给模型或公开 API；所有 WRITE 对 Agent 仍仅允许生成 Proposal，真实执行保持关闭。
 
+阶段3的已发布本体上下文、案件/快照/数据绑定身份、受控 READ 投影证明、动态能力交集和模型脱敏清单见 `PERSONAL_CREDIT_ONTOLOGY_AGENT_CONTEXT.md`。该层目前只提供内部安全基础，不开放新 API，也不启用阶段4的模型决策循环；`ontology_agent` 模式仍会明确失败关闭。
+
 申请级流程编排见 `PERSONAL_CREDIT_WORKFLOW_ORCHESTRATION.md`。它把 8 个 Action 组织为持久化流程，支持征信/反欺诈并行、人工复核条件跳过、Outbox 状态自动对账、崩溃租约恢复和追加式流程审计；流程终点仍只是决策建议。
 八 Action 合成业务验收数据、独立 `mvp_uat` 存储、沙箱启用和可重复执行方式见 `ACTION_CHAIN_UAT_GUIDE.md`；业务结果只允许由对应 Action 生成，不通过 SQL 预填。
 首个风险评估 Action 的 API、写入规则、跨库补偿和真实受控验收见 `PERSONAL_CREDIT_GENERATE_RISK_ASSESSMENT_ACTION.md`。

@@ -251,6 +251,8 @@ class PersonalCreditFunctionDataAdapter:
             raise FunctionDataAdapterError("共享快照与当前贷款申请不匹配")
         if snapshot.data_binding_version != self.bindings.ontology_version:
             raise FunctionDataAdapterError("共享快照与当前本体数据绑定版本不匹配")
+        if snapshot.data_binding_digest != self.bindings.binding_digest:
+            raise FunctionDataAdapterError("共享快照与当前本体数据绑定摘要不匹配")
         return snapshot
 
     def load_association_graph(self, borrower_id: str, *, hops: int = 2, limit: int = 300) -> dict[str, Any]:
