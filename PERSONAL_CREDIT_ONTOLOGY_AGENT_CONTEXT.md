@@ -2,7 +2,7 @@
 
 ## 阶段边界
 
-本阶段建立 `OntologyContextProvider` 和 `AgentCapabilityRegistry`，为后续只读多轮运行时提供可信输入，但不启用模型的 Decide → Act → Observe → Replan 循环。`PERSONAL_CREDIT_AGENT_MODE=ontology_agent` 仍保持失败关闭，现有 `legacy` `/api/agents/personal-credit/run`、传统 Workflow 和独立 Action API 不变。
+本阶段建立 `OntologyContextProvider` 和 `AgentCapabilityRegistry`，为只读多轮运行时提供可信输入。阶段4已在其上接入独立、有界的 Decide → Act → Observe → Replan 循环；运行时协议和启用门禁见 `PERSONAL_CREDIT_ONTOLOGY_AGENT_RUNTIME.md`。现有 `legacy` `/api/agents/personal-credit/run`、传统 Workflow 和独立 Action API 保持兼容。
 
 本体中的业务 `ActionType` 仍为 8 个。阶段2标准化的 4 个 legacy READ 工具仍标记为 `PROJECTED`，不会伪装成 `ActionType`；只有同时提供与已发布本体版本、proposal 摘要和完整 READ 合同精确绑定、由独立 32 字节以上信任密钥签名的受控投影证明时，注册表才允许它们进入模型清单。证明应在发布流程中签发并由运行时加载、验证，禁止按请求从 live catalog 现场签发。后续如将 READ 升级为一等本体声明，必须发布新本体版本，不能在原版本号下修改内容。
 
@@ -42,4 +42,4 @@
 
 授权时注册表会重新生成最新 manifest 并做完整相等比较。过期 manifest、错误决策枚举、额外或嵌套参数、敏感字段、SQL/Cypher、PII 和提示注入都会被拒绝。`EXECUTE_WRITE_ACTION` 在所有主体和策略下恒定拒绝；阶段3授权结果只表达 READ 调用意图或 WRITE Proposal 意图，不携带 executor，也不会产生业务副作用。
 
-本阶段不新增公开 context/manifest API。阶段4运行时接入时应复用这些内部对象，并在每次 Action 前再次执行授权与系统参数注入校验。
+本阶段不新增公开 context/manifest API。阶段4运行时复用这些内部对象，并在每次 Action 前再次执行授权与系统参数注入校验。

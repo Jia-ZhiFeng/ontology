@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -9,6 +9,7 @@ from app.action.capabilities import OntologyCapabilityReference
 from app.agent.ontology_context import (
     OntologyContextError,
     OntologyContextProvider,
+    PublishedOntologyPublication,
     assert_model_safe_payload,
     safe_ontology_text,
 )
@@ -109,6 +110,79 @@ class OntologyContextProviderTests(unittest.TestCase):
         copy = context.proposal_copy()
         copy.metadata["mutated"] = True
         self.assertNotIn("mutated", context.proposal_copy().metadata)
+
+    def test_published_ontology_is_immutable_pinned_and_hides_proposal_json(self):
+        active_calls = []
+
+        def active_loader():
+            active_calls.append("active")
+            return self.record
+
+        provider = OntologyContextProvider(
+            lambda _version: self.record,
+            active_loader,
+            secret=SECRET,
+        )
+        publication = provider.resolve_published_ontology()
+
+        self.assertIsInstance(publication, PublishedOntologyPublication)
+        self.assertEqual(active_calls, ["active"])
+        self.assertRegex(publication.publication_id, r"^pub_[A-Za-z0-9_-]{43}$")
+        self.assertEqual(publication.ontology_id, "personal-credit")
+        self.assertEqual(publication.ontology_version, self.proposal.version)
+        self.assertEqual(publication.ontology_digest, proposal_digest(self.proposal))
+        self.assertEqual(
+            publication.data_binding_digest,
+            OntologyDataBinding(self.proposal).binding_digest,
+        )
+        self.assertNotIn("object_types", repr(publication))
+        self.assertNotIn("source_table", repr(publication))
+
+        proposal_copy = publication.proposal_copy()
+        proposal_copy.metadata["mutated"] = True
+        self.assertNotIn("mutated", publication.proposal_copy().metadata)
+        with self.assertRaises(FrozenInstanceError):
+            publication.ontology_version = "9.9.9"
+
+    def test_binding_snapshot_does_not_reload_after_active_version_switch(self):
+        active_calls = []
+        current = {"record": self.record}
+
+        def active_loader():
+            active_calls.append(current["record"]["version"])
+            return current["record"]
+
+        provider = OntologyContextProvider(
+            lambda version: current["record"] if version == self.proposal.version else None,
+            active_loader,
+            secret=SECRET,
+        )
+        publication = provider.resolve_published_ontology()
+        switched = self.proposal.model_copy(deep=True)
+        switched.version = "9.9.9"
+        current["record"] = _record(switched)
+
+        context = provider.bind_snapshot(
+            publication,
+            "APP-001",
+            _snapshot(self.proposal),
+        )
+
+        self.assertEqual(active_calls, [self.proposal.version])
+        self.assertEqual(context.ontology_version, self.proposal.version)
+        self.assertEqual(context.ontology_digest, proposal_digest(self.proposal))
+
+    def test_snapshot_binding_rejects_forged_publication(self):
+        publication = self.provider.resolve_published_ontology()
+        forged = replace(publication, published_at="2026-09-04T00:00:01+00:00")
+        self.assert_code(
+            "ONTOLOGY_CONTEXT_PUBLICATION_INVALID",
+            lambda: self.provider.bind_snapshot(
+                forged,
+                "APP-001",
+                _snapshot(self.proposal),
+            ),
+        )
 
     def test_context_id_is_opaque_and_changes_across_application_or_snapshot(self):
         first = self.provider.resolve_context("APP-001", _snapshot(self.proposal))
@@ -365,6 +439,12 @@ class OntologyContextProviderTests(unittest.TestCase):
         )
         for payload, expected in rejected:
             self.assert_code(expected, lambda payload=payload: assert_model_safe_payload(payload))
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            self.assert_code(
+                "ONTOLOGY_CONTEXT_UNSAFE_PAYLOAD",
+                lambda value=value: assert_model_safe_payload({"score": value}),
+            )
 
         self.assertEqual(
             safe_ontology_text("  风险评估  ", field="label"),

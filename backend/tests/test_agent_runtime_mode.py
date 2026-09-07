@@ -63,6 +63,24 @@ class PersonalCreditAgentModeTests(unittest.TestCase):
         with self.assertRaises(AgentRuntimeUnavailableError):
             require_personal_credit_agent_runtime("ontology_agent")
 
+    def test_ontology_mode_builds_only_explicit_ontology_runtime(self):
+        calls = []
+
+        runtime = build_personal_credit_agent_runtime(
+            mode="ontology_agent",
+            legacy_factory=lambda: calls.append("legacy"),
+            ontology_factory=lambda: calls.append("ontology") or object(),
+        )
+
+        self.assertIsNotNone(runtime)
+        self.assertEqual(calls, ["ontology"])
+        self.assertIs(
+            require_personal_credit_agent_runtime(
+                "ontology_agent", ontology_available=True
+            ),
+            PersonalCreditAgentMode.ONTOLOGY_AGENT,
+        )
+
     def test_runtime_status_exposes_safe_rollback_metadata(self):
         legacy = personal_credit_agent_runtime_status("legacy").public()
         ontology = personal_credit_agent_runtime_status(
@@ -79,6 +97,15 @@ class PersonalCreditAgentModeTests(unittest.TestCase):
             "available": False,
             "rollback_mode": "legacy",
             "ontology_agent_status": "pending_runtime",
+        })
+        ready = personal_credit_agent_runtime_status(
+            "ontology_agent", ontology_available=True
+        ).public()
+        self.assertEqual(ready, {
+            "mode": "ontology_agent",
+            "available": True,
+            "rollback_mode": "legacy",
+            "ontology_agent_status": "ready",
         })
 
     def test_invalid_environment_mode_fails_application_import(self):

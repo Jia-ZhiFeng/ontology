@@ -183,7 +183,8 @@ class FunctionDataAdapterTests(unittest.TestCase):
         self.assertEqual(len(snapshot.data_binding_digest), 64)
         self.assertEqual(postgres.connection_count, 1)
         statements = [statement for statement, _params in postgres.cursor.statements]
-        self.assertIn("REPEATABLE READ, READ ONLY", statements[0])
+        self.assertIn("statement_timeout", statements[0])
+        self.assertIn("REPEATABLE READ, READ ONLY", statements[1])
         self.assertFalse(any("SELECT *" in statement.upper() for statement in statements))
 
     def test_snapshot_query_uses_versioned_ontology_physical_binding(self):

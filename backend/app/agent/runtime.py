@@ -18,7 +18,7 @@ class AgentRuntimeUnavailableError(RuntimeError):
     def __init__(self, mode: PersonalCreditAgentMode):
         self.mode = mode
         super().__init__(
-            "ontology_agent 运行时尚未启用；请将 "
+            "ontology_agent 运行时依赖尚未就绪；请完成安全配置或将 "
             "PERSONAL_CREDIT_AGENT_MODE 切回 legacy"
         )
 
@@ -34,23 +34,40 @@ class AgentRuntimeStatus:
             "available": self.available,
             "rollback_mode": PersonalCreditAgentMode.LEGACY.value,
             "ontology_agent_status": (
-                "pending_runtime" if not self.available else "not_selected"
+                "ready"
+                if self.mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+                and self.available
+                else "pending_runtime"
+                if self.mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+                else "not_selected"
             ),
         }
 
 
-def personal_credit_agent_runtime_status(mode: object) -> AgentRuntimeStatus:
+def personal_credit_agent_runtime_status(
+    mode: object,
+    *,
+    ontology_available: bool = False,
+) -> AgentRuntimeStatus:
     selected = parse_personal_credit_agent_mode(mode)
     return AgentRuntimeStatus(
         mode=selected,
-        available=selected is PersonalCreditAgentMode.LEGACY,
+        available=(
+            selected is PersonalCreditAgentMode.LEGACY
+            or bool(ontology_available)
+        ),
     )
 
 
 def require_personal_credit_agent_runtime(
     mode: object,
+    *,
+    ontology_available: bool = False,
 ) -> PersonalCreditAgentMode:
-    status = personal_credit_agent_runtime_status(mode)
+    status = personal_credit_agent_runtime_status(
+        mode,
+        ontology_available=ontology_available,
+    )
     if not status.available:
         raise AgentRuntimeUnavailableError(status.mode)
     return status.mode
@@ -60,11 +77,11 @@ def build_personal_credit_agent_runtime(
     *,
     mode: object,
     legacy_factory: Callable[[], RuntimeT],
+    ontology_factory: Callable[[], RuntimeT] | None = None,
 ) -> RuntimeT:
     selected = parse_personal_credit_agent_mode(mode)
     if selected is PersonalCreditAgentMode.LEGACY:
         return legacy_factory()
-    # Phase 1 deliberately has no ontology runtime factory. A later phase must
-    # add the implementation and its safety gates explicitly instead of making
-    # this rollout switch silently reuse the legacy runtime.
-    raise AgentRuntimeUnavailableError(selected)
+    if ontology_factory is None:
+        raise AgentRuntimeUnavailableError(selected)
+    return ontology_factory()

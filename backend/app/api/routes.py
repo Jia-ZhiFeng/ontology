@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 from contextvars import ContextVar
 from datetime import datetime,timezone
+from time import perf_counter
 from typing import Any
 from uuid import UUID,uuid4
 
@@ -10,6 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel,ConfigDict,Field,SecretStr
 from ..core.config import *
+from ..core.agent_runtime import PersonalCreditAgentMode
 from ..postgres.client import PostgresService
 from ..postgres.business_lookup import BusinessLookupError,PersonalCreditBusinessLookup
 from ..kg.nebula import NebulaGraphService
@@ -29,9 +32,10 @@ from ..ontology.generator import generate
 from ..ontology.models import OntologyProposal
 from ..ontology.validator import validate
 from ..ontology.baseline import build_personal_credit_baseline
-from ..ontology.audit import audit_personal_credit_proposal
+from ..ontology.audit import audit_personal_credit_proposal,proposal_digest
 from ..ontology.axiom_executor import axiom_executability,execute_axioms
 from ..core.security import (
+    api_key_matches,
     external_llm_auth_error,
     mask_graph_snapshot,
     mask_payload,
@@ -150,6 +154,25 @@ from ..agent.runtime import (
     build_personal_credit_agent_runtime,
     personal_credit_agent_runtime_status,
     require_personal_credit_agent_runtime,
+)
+from ..agent.capability_registry import PublishedReadProjectionAttestation
+from ..agent.capability_registry import (
+    AgentAuthenticationSource,
+    AgentCapabilityAllowlist,
+    AgentCapabilityRegistry,
+    AgentCapabilityRegistryError,
+    AgentDynamicPolicy,
+    AgentPrincipalContext,
+)
+from ..agent.ontology_context import OntologyContextError,OntologyContextProvider
+from ..agent.ontology_runtime import (
+    ONTOLOGY_AGENT_HARD_TIMEOUT_SECONDS,
+    OntologyAgentRuntime,
+    OntologyAgentRuntimeError,
+)
+from ..agent.read_projection_repository import (
+    PostgresReadProjectionAttestationRepository,
+    ReadProjectionAttestationRepositoryError,
 )
 from ..action.workflow import (
     WORKFLOW_ACTIONS,
@@ -571,7 +594,11 @@ def _agent_proposal(ontology_version:str|None):
         else active_version_proposal()
     )
 
-def _personal_credit_agent(ontology_version:str|None):
+def _personal_credit_agent(
+    ontology_version:str|None,
+    *,
+    ontology_factory=None,
+):
     def legacy_factory():
         proposal=_agent_proposal(ontology_version)
         return PersonalCreditAgentService(
@@ -584,13 +611,25 @@ def _personal_credit_agent(ontology_version:str|None):
     return build_personal_credit_agent_runtime(
         mode=PERSONAL_CREDIT_AGENT_MODE,
         legacy_factory=legacy_factory,
+        ontology_factory=ontology_factory,
     )
 
 
-def _agent_runtime_mode_or_http():
+def _ontology_agent_static_configuration_ready()->bool:
+    return all(
+        len(value.encode("utf-8"))>=32
+        for value in (
+            ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET,
+            ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY,
+        )
+    )
+
+
+def _agent_runtime_mode_or_http(*,ontology_available:bool=False):
     try:
         return require_personal_credit_agent_runtime(
-            PERSONAL_CREDIT_AGENT_MODE
+            PERSONAL_CREDIT_AGENT_MODE,
+            ontology_available=ontology_available,
         )
     except AgentRuntimeUnavailableError as error:
         raise HTTPException(503,{
@@ -599,6 +638,24 @@ def _agent_runtime_mode_or_http():
             "agent_mode":error.mode.value,
             "rollback_mode":"legacy",
         }) from error
+
+
+def _ontology_agent_deadline_remaining(deadline:float|None)->float:
+    if deadline is None:
+        return ONTOLOGY_AGENT_HARD_TIMEOUT_SECONDS
+    remaining=deadline-perf_counter()
+    if remaining<=0:
+        raise TimeoutError("ontology agent hard deadline exceeded")
+    return remaining
+
+
+async def _ontology_agent_sync_call(deadline:float,callback,*args,**kwargs):
+    """Run blocking control/data-plane work off-loop under one route deadline."""
+
+    return await asyncio.wait_for(
+        asyncio.to_thread(callback,*args,**kwargs),
+        timeout=_ontology_agent_deadline_remaining(deadline),
+    )
 
 def ensure_ontology_git():
     ontology_git.bootstrap(active_version_proposal())
@@ -1110,6 +1167,170 @@ def _personal_credit_action_capability_catalog(proposal:OntologyProposal):
         read_request_model=PersonalCreditAgentToolRequest,
         read_executor=PersonalCreditAgentService.execute_tool,
         read_function_registry=_READ_ONLY_FUNCTION_REGISTRY,
+    )
+
+
+def _read_projection_attestation_repository():
+    return PostgresReadProjectionAttestationRepository(postgres())
+
+
+def _record_agent_read_projection_publication(
+    proposal: OntologyProposal,
+) -> PublishedReadProjectionAttestation | None:
+    """Sign only from the controlled ontology publication/bootstrap path."""
+
+    signing_key = ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY
+    if not signing_key:
+        return None
+    if len(signing_key.encode("utf-8")) < 32:
+        raise VersionWorkflowError(
+            "ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY 必须至少 32 字节"
+        )
+    digest = proposal_digest(proposal)
+    artifact = PublishedReadProjectionAttestation.sign_publication_identity(
+        ontology_id=ONTOLOGY_PERSONAL_CREDIT,
+        ontology_version=proposal.version,
+        ontology_digest=digest,
+        catalog=_personal_credit_action_capability_catalog(proposal),
+        signing_key=signing_key,
+    )
+    return _read_projection_attestation_repository().save_publication(artifact)
+
+
+def _ontology_agent_authentication_source(
+    request: Request,
+) -> AgentAuthenticationSource | None:
+    if bool(getattr(request.state,"mvp_authenticated",False)):
+        mode=str(getattr(request.state,"mvp_auth_mode","") or "")
+        if mode=="local_session":
+            return AgentAuthenticationSource.LOCAL_SESSION
+        if mode=="mvp_api_key":
+            return AgentAuthenticationSource.API_CLIENT
+    if api_key_matches(MVP_API_KEY,request.headers.get("X-API-Key")):
+        return AgentAuthenticationSource.API_CLIENT
+    return None
+
+
+def _build_ontology_personal_credit_agent(
+    *,
+    ontology_version: str | None,
+    request: Request,
+) -> OntologyAgentRuntime:
+    """Assemble only pinned, attested, read-isolated ontology dependencies."""
+
+    if not _ontology_agent_static_configuration_ready():
+        raise AgentRuntimeUnavailableError(
+            PersonalCreditAgentMode.ONTOLOGY_AGENT
+        )
+    authentication_source=_ontology_agent_authentication_source(request)
+    if authentication_source is None:
+        raise HTTPException(401,"本体 Agent 要求已认证会话")
+
+    context_provider=OntologyContextProvider(
+        version_store.get,
+        version_store.active,
+        secret=ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET,
+    )
+    publication=context_provider.resolve_published_ontology(ontology_version)
+    proposal=publication.proposal_copy()
+    catalog_builder=lambda: _personal_credit_action_capability_catalog(
+        publication.proposal_copy()
+    )
+    artifact=_read_projection_attestation_repository().get_publication(
+        ontology_id=publication.ontology_id,
+        ontology_version=publication.ontology_version,
+        ontology_digest=publication.ontology_digest,
+    )
+    # Verify the independent trust-root artifact before reading any case row.
+    try:
+        preflight_catalog=catalog_builder()
+    except AgentCapabilityRegistryError:
+        raise
+    except Exception as exc:
+        raise AgentCapabilityRegistryError(
+            "AGENT_CAPABILITY_CATALOG_REJECTED",
+            "READ 投影预检目录构建失败",
+        ) from exc
+    artifact.verify_publication_identity(
+        ontology_id=publication.ontology_id,
+        ontology_version=publication.ontology_version,
+        ontology_digest=publication.ontology_digest,
+        catalog=preflight_catalog,
+        verification_key=ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY,
+    )
+    # Keep the attested catalog immutable for this request. Rebuilding it from
+    # mutable process globals after the case snapshot is loaded would create a
+    # check/use gap in which a later integrity failure happens too late.
+    pinned_catalog_json=preflight_catalog.model_dump_json()
+    catalog_type=type(preflight_catalog)
+    catalog_builder=lambda: catalog_type.model_validate_json(
+        pinned_catalog_json
+    )
+
+    read_names=tuple(READ_ONLY_AGENT_TOOLS)
+    write_names=tuple(ACTION_RUNTIME_DESIGNS)
+    allowlist=AgentCapabilityAllowlist(
+        revision="personal-credit-ontology-agent-stage4-v1",
+        read_names=read_names,
+        write_proposal_names=write_names,
+    )
+    dynamic_policy=AgentDynamicPolicy(
+        revision="personal-credit-ontology-agent-stage4-v1",
+        allowed_names=read_names+write_names,
+        denied_names=(),
+        write_proposal_authentication_sources=(
+            AgentAuthenticationSource.LOCAL_SESSION,
+            AgentAuthenticationSource.API_CLIENT,
+        ),
+    )
+    registry=AgentCapabilityRegistry(
+        catalog_builder=catalog_builder,
+        context_provider=context_provider,
+        read_projection_attestation=artifact,
+        read_projection_verification_key=(
+            ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY
+        ),
+        allowlist=allowlist,
+        dynamic_policy=dynamic_policy,
+    )
+    adapter=PersonalCreditFunctionDataAdapter(
+        postgres(),nebula,proposal=proposal
+    )
+    read_service=PersonalCreditAgentService(
+        adapter,
+        ontology_version=publication.ontology_version,
+    )
+
+    def principal_factory(context):
+        principal_id=(
+            "authenticated-local-session"
+            if authentication_source is AgentAuthenticationSource.LOCAL_SESSION
+            else "authenticated-api-client"
+        )
+        return AgentPrincipalContext(
+            principal_id=principal_id,
+            authentication_source=authentication_source,
+            authenticated=True,
+            application_id=context.application_id,
+            snapshot_id=context.snapshot_id,
+            iam_roles=(),
+        )
+
+    def read_executor(*,authorization,application_id,snapshot):
+        return read_service.execute_tool(
+            application_id,
+            authorization.capability_name,
+            snapshot=snapshot,
+        )
+
+    return OntologyAgentRuntime(
+        context_provider=context_provider,
+        capability_registry=registry,
+        principal=principal_factory,
+        snapshot_loader=adapter.load_postgres_snapshot,
+        read_executor=read_executor,
+        published_ontology=publication,
+        requested_ontology_version=publication.ontology_version,
     )
 
 
@@ -1893,10 +2114,20 @@ async def llm_test(cfg:LLMConfig):
 
 @router.get("/agents/personal-credit/tools")
 async def personal_credit_agent_tools():
+    selected_mode=PersonalCreditAgentMode(PERSONAL_CREDIT_AGENT_MODE)
+    ontology_selected=(
+        selected_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+    )
     return {
-        "tools":PersonalCreditAgentService.catalog(),
+        # Ontology capabilities are case/version/principal bound and therefore
+        # cannot be represented by this unaffiliated static endpoint.
+        "tools":[] if ontology_selected else PersonalCreditAgentService.catalog(),
         "agent_runtime":personal_credit_agent_runtime_status(
-            PERSONAL_CREDIT_AGENT_MODE
+            PERSONAL_CREDIT_AGENT_MODE,
+            ontology_available=(
+                ontology_selected
+                and _ontology_agent_static_configuration_ready()
+            ),
         ).public(),
         "execution_boundary":{
             "read_only_only":True,
@@ -1908,29 +2139,66 @@ async def personal_credit_agent_tools():
             "max_steps":4,
             "default_steps":1,
             "execution_mode":"sequential",
-            "response_types":["CHAT","NEEDS_CLARIFICATION","ACTION_PLAN"],
+            "response_types":(
+                ["CHAT","NO_ACTION","ACTION_PLAN","ACTION_RUN"]
+                if ontology_selected
+                else ["CHAT","NEEDS_CLARIFICATION","ACTION_PLAN"]
+            ),
             "multi_turn":True,
             "conversation":{
                 "storage":"in_memory",
                 "ttl_seconds":1800,
                 "max_context_turns":8,
-                "scope_bound_to":["application_id","ontology_version"],
+                "scope_bound_to":(
+                    [
+                        "application_id","ontology_id","ontology_version",
+                        "ontology_digest","principal",
+                    ]
+                    if ontology_selected
+                    else ["application_id","ontology_version"]
+                ),
                 "single_inflight_turn":True,
             },
-            "result_synthesis":"single_call_llm_with_deterministic_fallback",
-            "max_llm_calls_per_turn":1,
-            "explicit_business_routing":"deterministic_then_llm_synthesis",
-            "model_planner_result":"deterministic",
-            "execution_semantics":"same_snapshot_independent",
+            "result_synthesis":(
+                "bounded_replan_with_deterministic_fallback"
+                if ontology_selected
+                else "single_call_llm_with_deterministic_fallback"
+            ),
+            "max_llm_calls_per_turn":3 if ontology_selected else 1,
+            "max_ontology_lookups_per_turn":1 if ontology_selected else 0,
+            "explicit_business_routing":(
+                "ontology_manifest_decide_observe_replan"
+                if ontology_selected
+                else "deterministic_then_llm_synthesis"
+            ),
+            "model_planner_result":(
+                "strict_single_step_decision"
+                if ontology_selected else "deterministic"
+            ),
+            "execution_semantics":(
+                "same_snapshot_observe_replan"
+                if ontology_selected else "same_snapshot_independent"
+            ),
             "response_contract":["answer","final_answer","trace","synthesis"],
             "trace_policy":{
-                "stages":["planner","readiness","action","synthesis","fallback"],
+                "stages":(
+                    [
+                        "plan","ontology_lookup","action","observation",
+                        "replan","clarification","answer","fallback",
+                    ]
+                    if ontology_selected
+                    else [
+                        "planner","readiness","action","synthesis","fallback",
+                    ]
+                ),
                 "contains_reasoning":False,
                 "contains_sensitive_data":False,
             },
-            "model_arguments_allowed":False,
+            "model_arguments_allowed":ontology_selected,
             "write_actions_are_proposals_only":True,
-            "unrecognized_instruction":"NO_ACTION",
+            "unrecognized_instruction":(
+                "model_decision" if ontology_selected else "NO_ACTION"
+            ),
             "clarification_status":"NEEDS_CLARIFICATION",
         },
     }
@@ -1967,14 +2235,44 @@ async def execute_personal_credit_agent_tool(
 async def run_personal_credit_agent(
     req:PersonalCreditAgentRunRequest,request:Request
 ):
-    # The reserved ontology mode must fail before model-configuration schema
-    # setup, credential access, Agent construction, or any Action execution.
-    agent_mode=_agent_runtime_mode_or_http()
+    agent_mode=_agent_runtime_mode_or_http(ontology_available=True)
+    ontology_deadline=(
+        perf_counter()+ONTOLOGY_AGENT_HARD_TIMEOUT_SECONDS
+        if agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+        else None
+    )
+    if (
+        agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+        and _ontology_agent_authentication_source(request) is None
+    ):
+        # Ontology mode always requires a trusted principal, so reject before
+        # touching model configuration or any ontology/data repository.
+        raise HTTPException(401,"本体 Agent 要求已认证会话")
+    if (
+        agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+        and not _ontology_agent_static_configuration_ready()
+    ):
+        # Missing trust roots are a deployment-readiness failure. Do not even
+        # inspect model metadata until the ontology verification boundary can
+        # be constructed.
+        _agent_runtime_mode_or_http(ontology_available=False)
     # Inspect only non-secret metadata first. An anonymous UAT request is
     # rejected before the active key is decrypted or a client is constructed.
     managed_repository=_llm_configuration_repository()
     try:
-        active_metadata=managed_repository.active_metadata()
+        active_metadata=(
+            await _ontology_agent_sync_call(
+                ontology_deadline,managed_repository.active_metadata
+            )
+            if ontology_deadline is not None
+            else managed_repository.active_metadata()
+        )
+    except (asyncio.TimeoutError,TimeoutError):
+        raise HTTPException(503,{
+            "code":"ONTOLOGY_AGENT_HARD_TIMEOUT",
+            "message":"本体 Agent 已达到本轮硬时限",
+            "rollback_mode":"legacy",
+        })
     except Exception as error:
         _raise_llm_configuration_http(error)
     auth_error=external_llm_auth_error(
@@ -1984,24 +2282,70 @@ async def run_personal_credit_agent(
     )
     if auth_error:
         raise HTTPException(*auth_error)
+    if (
+        agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
+        and active_metadata is None
+    ):
+        raise HTTPException(503,{
+            "code":"ONTOLOGY_AGENT_MODEL_REQUIRED",
+            "message":"本体 Agent 需要已验证并启用的模型配置",
+            "rollback_mode":"legacy",
+        })
     circuit=None
     try:
-        service=_personal_credit_agent(req.ontology_version)
+        if agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT:
+            service=await _ontology_agent_sync_call(
+                ontology_deadline,
+                _personal_credit_agent,
+                req.ontology_version,
+                ontology_factory=lambda: _build_ontology_personal_credit_agent(
+                    ontology_version=req.ontology_version,request=request
+                ),
+            )
+        else:
+            service=_personal_credit_agent(req.ontology_version)
         if active_metadata is not None:
-            runtime=managed_repository.active_runtime()
+            runtime=(
+                await _ontology_agent_sync_call(
+                    ontology_deadline,managed_repository.active_runtime
+                )
+                if ontology_deadline is not None
+                else managed_repository.active_runtime()
+            )
             client=_llm_client_from_values(runtime) if runtime else None
         else:
             client=None
         if client:
-            circuit=_external_circuit(postgres(),"llm-service")
-            circuit.before_call()
-        result=await service.run(
+            if ontology_deadline is not None:
+                def prepare_circuit():
+                    prepared=_external_circuit(postgres(),"llm-service")
+                    prepared.before_call()
+                    return prepared
+                circuit=await _ontology_agent_sync_call(
+                    ontology_deadline,prepare_circuit
+                )
+            else:
+                circuit=_external_circuit(postgres(),"llm-service")
+                circuit.before_call()
+        run_timeout=(
+            _ontology_agent_deadline_remaining(ontology_deadline)
+            if ontology_deadline is not None else None
+        )
+        run_awaitable=service.run(
             req.application_id,
             req.instruction,
             llm_client=client,
             execute=req.execute,
             max_steps=req.max_steps,
             conversation_id=req.conversation_id,
+        )
+        result=(
+            await asyncio.wait_for(
+                run_awaitable,
+                timeout=run_timeout,
+            )
+            if ontology_deadline is not None
+            else await run_awaitable
         )
         result["agent_mode"]=agent_mode.value
         synthesis=result.get("synthesis") or {}
@@ -2020,19 +2364,89 @@ async def run_personal_credit_agent(
             synthesis.get("status")=="FALLBACK"
             and bool(synthesis.get("model_called"))
         )
+        circuit_callback=None
+        circuit_args=()
         if circuit and model_quality_failed:
             reason_code=str(
                 synthesis.get("reason_code") or "MODEL_RESPONSE_DEGRADED"
             )[:64]
-            circuit.record_failure(
+            circuit_callback=circuit.record_failure
+            circuit_args=(
                 "AGENT_MODEL_QUALITY_DEGRADED",
                 "模型响应未通过质量门禁："+reason_code,
             )
         elif circuit:
-            circuit.record_success()
+            circuit_callback=circuit.record_success
+        if circuit_callback is not None:
+            if ontology_deadline is not None:
+                try:
+                    await _ontology_agent_sync_call(
+                        ontology_deadline,circuit_callback,*circuit_args
+                    )
+                except (asyncio.TimeoutError,TimeoutError):
+                    logger.warning(
+                        "ontology-agent circuit telemetry skipped at hard deadline"
+                    )
+                except Exception:
+                    # Telemetry must never discard an already completed
+                    # Observation/result. The request remains authoritative;
+                    # operational storage can recover independently.
+                    logger.exception(
+                        "ontology-agent circuit telemetry failed after completion"
+                    )
+            else:
+                circuit_callback(*circuit_args)
         return result
+    except (asyncio.TimeoutError,TimeoutError):
+        logger.warning("ontology-agent request reached its hard deadline")
+        raise HTTPException(503,{
+            "code":"ONTOLOGY_AGENT_HARD_TIMEOUT",
+            "message":"本体 Agent 已达到本轮硬时限",
+            "rollback_mode":"legacy",
+        })
     except ExternalCircuitOpenError as e:
         raise HTTPException(503,error_detail(e))
+    except AgentRuntimeUnavailableError as e:
+        raise HTTPException(503,{
+            "code":e.code,
+            "message":error_detail(e),
+            "agent_mode":e.mode.value,
+            "rollback_mode":"legacy",
+        })
+    except ReadProjectionAttestationRepositoryError as e:
+        raise HTTPException(503,{
+            **e.public(),
+            "rollback_mode":"legacy",
+        })
+    except OntologyContextError as e:
+        raise HTTPException(503,{
+            "code":e.code,
+            "message":"当前已发布本体上下文未通过完整性校验",
+            "rollback_mode":"legacy",
+        })
+    except AgentCapabilityRegistryError as e:
+        if e.code in {
+            "AGENT_CAPABILITY_CONTEXT_REJECTED",
+            "AGENT_CAPABILITY_CATALOG_REJECTED",
+            "AGENT_CAPABILITY_ATTESTATION_REJECTED",
+            "AGENT_CAPABILITY_POLICY_REJECTED",
+        }:
+            raise HTTPException(503,{
+                **e.public(),
+                "rollback_mode":"legacy",
+            })
+        status=403 if "PRINCIPAL" in e.code or "POLICY" in e.code else 409
+        raise HTTPException(status,e.public())
+    except OntologyAgentRuntimeError as e:
+        status=(
+            503
+            if e.code in {
+                "ONTOLOGY_AGENT_CONTEXT_FAILED",
+                "ONTOLOGY_AGENT_MODEL_UNAVAILABLE",
+            }
+            else 422
+        )
+        raise HTTPException(status,e.public())
     except AgentConversationBusyError as e:
         raise HTTPException(409,error_detail(e))
     except AgentConversationError as e:
@@ -2041,10 +2455,24 @@ async def run_personal_credit_agent(
             LLMConfigurationEncryptionError) as e:
         _raise_llm_configuration_http(e)
     except (VersionWorkflowError,FunctionDataAdapterError,AgentPlanningError,ValueError) as e:
+        if agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT:
+            logger.exception("ontology-agent dependency rejected the request")
+            raise HTTPException(503,{
+                "code":"ONTOLOGY_AGENT_DEPENDENCY_REJECTED",
+                "message":"本体 Agent 依赖未通过安全校验",
+                "rollback_mode":"legacy",
+            })
         if circuit:
             circuit.record_failure("AGENT_PLANNING_FAILED",error_detail(e))
         raise HTTPException(422,error_detail(e))
     except Exception as e:
+        if agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT:
+            logger.exception("ontology-agent request failed")
+            raise HTTPException(503,{
+                "code":"ONTOLOGY_AGENT_UNAVAILABLE",
+                "message":"本体 Agent 服务暂不可用",
+                "rollback_mode":"legacy",
+            })
         if circuit:
             circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
         raise HTTPException(400,error_detail(e))
@@ -2251,12 +2679,39 @@ def _switch_published_version(version:str,action:str):
                 "目标版本与当前 Action 运行合同不兼容："
                 +"；".join(runtime_errors)
             )
+        ontology_agent_selected=(
+            PERSONAL_CREDIT_AGENT_MODE=="ontology_agent"
+        )
+        if (
+            ontology_agent_selected
+            and not _ontology_agent_static_configuration_ready()
+        ):
+            raise VersionWorkflowError(
+                "本体 Agent 发布证明校验配置未就绪"
+            )
         profile=postgres().validation_profile()
         audit=review_release_candidate(proposal,profile,previous)
         if not audit["valid"]:
             raise VersionWorkflowError("当前数据下重新审核未通过，发布或回滚已阻止")
         if target.get("audit_digest")!=audit["audited_digest"]:
             raise VersionWorkflowError("已批准内容与当前候选摘要不一致")
+        # New publication may create the immutable artifact. Rollback must use
+        # the historical artifact and may never re-sign live READ code.
+        if action=="publish":
+            _record_agent_read_projection_publication(proposal)
+        elif ontology_agent_selected:
+            artifact=_read_projection_attestation_repository().get_publication(
+                ontology_id=ONTOLOGY_PERSONAL_CREDIT,
+                ontology_version=proposal.version,
+                ontology_digest=proposal_digest(proposal),
+            )
+            artifact.verify_publication_identity(
+                ontology_id=ONTOLOGY_PERSONAL_CREDIT,
+                ontology_version=proposal.version,
+                ontology_digest=proposal_digest(proposal),
+                catalog=_personal_credit_action_capability_catalog(proposal),
+                verification_key=ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY,
+            )
         n=nebula()
         try:
             compatibility=n.abox_compatibility_report(proposal)

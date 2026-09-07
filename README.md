@@ -19,7 +19,7 @@ Action 层分层、统一返回信封和 Function 注册中心边界见 `PERSONA
 
 阶段2的统一 `ActionCapability` 内部合同见 `PERSONAL_CREDIT_ACTION_CAPABILITY.md`。业务 `ActionType` 仍为 8 个 WRITE；4 个 legacy 只读工具以 `PROJECTED` 能力记录过渡，因此标准目录为 8 WRITE + 4 READ，但只读记录不计入业务 Action 数。完整目录含内部 Schema 和 runtime binding，当前不直接暴露给模型或公开 API；所有 WRITE 对 Agent 仍仅允许生成 Proposal，真实执行保持关闭。
 
-阶段3的已发布本体上下文、案件/快照/数据绑定身份、受控 READ 投影证明、动态能力交集和模型脱敏清单见 `PERSONAL_CREDIT_ONTOLOGY_AGENT_CONTEXT.md`。该层目前只提供内部安全基础，不开放新 API，也不启用阶段4的模型决策循环；`ontology_agent` 模式仍会明确失败关闭。
+阶段3的已发布本体上下文、案件/快照/数据绑定身份、受控 READ 投影证明、动态能力交集和模型脱敏清单见 `PERSONAL_CREDIT_ONTOLOGY_AGENT_CONTEXT.md`。阶段4的严格五类决策、有界 Decide → Act → Observe → Replan 循环、发布证明仓储、启用条件和 legacy 回滚见 `PERSONAL_CREDIT_ONTOLOGY_AGENT_RUNTIME.md`。
 
 申请级流程编排见 `PERSONAL_CREDIT_WORKFLOW_ORCHESTRATION.md`。它把 8 个 Action 组织为持久化流程，支持征信/反欺诈并行、人工复核条件跳过、Outbox 状态自动对账、崩溃租约恢复和追加式流程审计；流程终点仍只是决策建议。
 八 Action 合成业务验收数据、独立 `mvp_uat` 存储、沙箱启用和可重复执行方式见 `ACTION_CHAIN_UAT_GUIDE.md`；业务结果只允许由对应 Action 生成，不通过 SQL 预填。
@@ -66,7 +66,7 @@ Compose 会依次等待 PostgreSQL、NebulaGraph Meta/Storage/Graph、Storage Ho
 - CLI、自动化和远程部署继续支持 `X-API-Key`；远程环境应设置 `MVP_AUTH_MODE=api_key`。本地会话签名可通过独立的 `MVP_LOCAL_SESSION_SECRET` 配置；仅本地模式允许回退到 32 字节以上的 `MVP_API_KEY`。Docker 发布端口均绑定 `127.0.0.1`，不要在公网绑定下启用 `MVP_LOCAL_SESSION_TRUST_PROXY`。
 - `frontend/credit-review.html` 是个人信审业务主界面。用户可在同一案件中连续对话；后端保存最近 8 轮脱敏上下文，Planner 最多拆解为 4 个有序只读 Action，并返回逐步执行轨迹、证据链和后续写入建议。前端不生成模拟结论；所有业务写入都停在人工确认表单，确认后才调用工作流接口。
 - `frontend/workbench.html` 保留为兼容入口，继续提供 8 步信审流程的传统办理视图；本体建模后台仍通过 `frontend/live-backend.js` 对接真实服务。
-- 对话 Agent 运行模式由服务端 `PERSONAL_CREDIT_AGENT_MODE` 控制，当前默认且可回滚值为 `legacy`。`ontology_agent` 是后续阶段的预留模式，在真实运行时接入前会明确返回 `ONTOLOGY_AGENT_NOT_READY`，不会静默回落、调用模型或执行 Action。客户端不能通过 `/run` 请求切换模式；修改环境变量后需要重启后端。该开关不影响传统 Workflow、独立 Action API 或既有 outbox 消费。
+- 对话 Agent 运行模式由服务端 `PERSONAL_CREDIT_AGENT_MODE` 控制，默认且可回滚值为 `legacy`。`ontology_agent` 已接入阶段4只读运行时，但只有在独立 context/READ 证明密钥、对应已发布证明、认证会话和启用模型全部就绪时才可运行，否则明确失败关闭；它不会静默回落关键词路由。WRITE 只产生待确认 Proposal，真实执行保持关闭。客户端不能通过 `/run` 请求切换模式；修改环境变量后需要重启后端。该开关不影响传统 Workflow、独立 Action API 或既有 outbox 消费。
 - 外部对话 / Planner 模型统一在 `credit-review.html` 左侧“模型管理”模块中配置。API Key 仅在新增或轮换时提交一次，由 PostgreSQL `pgcrypto` 加密保存；列表只返回脱敏状态，浏览器不再保存模型密钥，Agent 请求也不再携带临时 `llm` 配置。配置必须先通过当前版本连接测试才能启用，后续 Agent 自动使用后端唯一启用模型；没有启用模型时使用确定性 Planner。生产环境应设置独立的 `LLM_CONFIG_ENCRYPTION_KEY`；本地未设置时会回退使用 `MVP_API_KEY`，此时轮换 MVP Key 后需要重新填写外部模型密钥。
 - 模型 API Key 与 MVP 后端身份会话仍是不同安全边界：前者由后端集中管理，后者只用于授权模型管理、模型调用和业务写入。`api_key` UAT 环境可将 `WORKBENCH_UNAUTHENTICATED=true`，仅匿名开放精确列出的个人信审查询；`local_session` 模式会强制关闭该匿名旁路。若后端存在启用模型，未认证 Agent 请求会在解密密钥或访问模型前返回 401，不会消耗外部模型额度。
 - 提示词模板当前仅保留为候选设计预览，文档抽取也明确显示“后端尚未提供接口”；两者不会返回前端模拟结果。

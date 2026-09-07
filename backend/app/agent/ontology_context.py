@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -246,6 +247,11 @@ def assert_model_safe_payload(payload: Any) -> None:
                 allow_empty=True,
             )
             return
+        if isinstance(value, float) and not math.isfinite(value):
+            _fail(
+                "ONTOLOGY_CONTEXT_UNSAFE_PAYLOAD",
+                "模型载荷包含非有限数值",
+            )
         if value is None or isinstance(value, (bool, int, float)):
             return
         _fail("ONTOLOGY_CONTEXT_UNSAFE_PAYLOAD", "模型载荷包含不支持的数据类型")
@@ -343,6 +349,22 @@ class OntologyModelSlice(BaseModel):
         payload = self._validated_payload(self)
         assert_model_safe_payload(payload)
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedOntologyPublication:
+    """Immutable, provider-attested identity of one published ontology."""
+
+    publication_id: str
+    ontology_id: str
+    ontology_version: str
+    ontology_digest: str
+    data_binding_digest: str
+    published_at: str
+    _proposal_json: str = field(repr=False, compare=False)
+
+    def proposal_copy(self) -> OntologyProposal:
+        return OntologyProposal.model_validate(json.loads(self._proposal_json))
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,17 +489,17 @@ class OntologyContextProvider:
         self._max_references = max_references
         self._max_slice_bytes = max_slice_bytes
 
-    def resolve_context(
+    def resolve_published_ontology(
         self,
-        application_id: str,
-        snapshot: Any,
         requested_version: str | None = None,
-    ) -> PublishedOntologyContext:
-        application = safe_ontology_text(
-            application_id,
-            field="application_id",
-            max_length=32,
-        )
+    ) -> PublishedOntologyPublication:
+        """Load and attest one published record exactly once.
+
+        The returned publication pins the proposal, version and both content
+        digests before any case snapshot is loaded. In particular, callers do
+        not need to read the active record again when binding a snapshot.
+        """
+
         requested = None
         if requested_version is not None:
             requested = safe_ontology_text(
@@ -556,6 +578,115 @@ class OntologyContextProvider:
         ):
             _fail("ONTOLOGY_CONTEXT_DIGEST_MISMATCH", "本体内容与发布审核摘要不一致")
 
+        try:
+            expected_binding_digest = OntologyDataBinding(proposal).binding_digest
+        except OntologyDataBindingError as exc:
+            raise OntologyContextError(
+                "ONTOLOGY_CONTEXT_DATA_BINDING_INVALID",
+                "已发布本体无法构造安全数据绑定",
+            ) from exc
+        raw_published_at = _record_value(record, "published_at")
+        if isinstance(raw_published_at, datetime):
+            published_at = raw_published_at.isoformat()
+        else:
+            published_at = datetime.fromisoformat(
+                str(raw_published_at).strip().replace("Z", "+00:00")
+            ).isoformat()
+        proposal_json = json.dumps(
+            proposal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        publication_id = self._publication_id(
+            ontology_version=proposal.version,
+            ontology_digest=calculated_digest,
+            data_binding_digest=expected_binding_digest,
+            published_at=published_at,
+        )
+        return PublishedOntologyPublication(
+            publication_id=publication_id,
+            ontology_id=self._ontology_id,
+            ontology_version=proposal.version,
+            ontology_digest=calculated_digest,
+            data_binding_digest=expected_binding_digest,
+            published_at=published_at,
+            _proposal_json=proposal_json,
+        )
+
+    def bind_snapshot(
+        self,
+        publication: PublishedOntologyPublication,
+        application_id: str,
+        snapshot: Any,
+    ) -> PublishedOntologyContext:
+        """Bind a case snapshot to an already pinned publication."""
+
+        if not isinstance(publication, PublishedOntologyPublication):
+            _fail("ONTOLOGY_CONTEXT_PUBLICATION_INVALID", "publication 类型无效")
+        try:
+            proposal = publication.proposal_copy()
+        except Exception as exc:
+            raise OntologyContextError(
+                "ONTOLOGY_CONTEXT_PROPOSAL_INVALID",
+                "publication 中的 proposal 无效",
+            ) from exc
+        calculated_digest = proposal_digest(proposal)
+        try:
+            expected_binding_digest = OntologyDataBinding(proposal).binding_digest
+        except OntologyDataBindingError as exc:
+            raise OntologyContextError(
+                "ONTOLOGY_CONTEXT_DATA_BINDING_INVALID",
+                "publication 中的本体无法构造安全数据绑定",
+            ) from exc
+        publication_fields = (
+            publication.publication_id,
+            publication.ontology_id,
+            publication.ontology_version,
+            publication.ontology_digest,
+            publication.data_binding_digest,
+            publication.published_at,
+        )
+        if any(
+            not isinstance(value, str) or not value
+            for value in publication_fields
+        ):
+            _fail(
+                "ONTOLOGY_CONTEXT_PUBLICATION_INVALID",
+                "publication 字段无效",
+            )
+        expected_publication_id = self._publication_id(
+            ontology_version=publication.ontology_version,
+            ontology_digest=publication.ontology_digest,
+            data_binding_digest=publication.data_binding_digest,
+            published_at=publication.published_at,
+        )
+        if (
+            publication.ontology_id != self._ontology_id
+            or proposal.version != publication.ontology_version
+            or not _DIGEST_RE.fullmatch(publication.ontology_digest)
+            or not _DIGEST_RE.fullmatch(publication.data_binding_digest)
+            or not _valid_publication_time(publication.published_at)
+            or not hmac.compare_digest(calculated_digest, publication.ontology_digest)
+            or not hmac.compare_digest(
+                expected_binding_digest,
+                publication.data_binding_digest,
+            )
+            or not hmac.compare_digest(
+                publication.publication_id,
+                expected_publication_id,
+            )
+        ):
+            _fail(
+                "ONTOLOGY_CONTEXT_PUBLICATION_INVALID",
+                "publication 身份或内容校验失败",
+            )
+
+        application = safe_ontology_text(
+            application_id,
+            field="application_id",
+            max_length=32,
+        )
         if snapshot is None:
             _fail("ONTOLOGY_CONTEXT_SNAPSHOT_INVALID", "必须提供一致性快照")
         snapshot_application = _snapshot_value(snapshot, "application")
@@ -587,13 +718,6 @@ class OntologyContextProvider:
                 "ONTOLOGY_CONTEXT_DATA_BINDING_DIGEST_INVALID",
                 "快照数据绑定摘要格式无效",
             )
-        try:
-            expected_binding_digest = OntologyDataBinding(proposal).binding_digest
-        except OntologyDataBindingError as exc:
-            raise OntologyContextError(
-                "ONTOLOGY_CONTEXT_DATA_BINDING_INVALID",
-                "已发布本体无法构造安全数据绑定",
-            ) from exc
         if not hmac.compare_digest(snapshot_digest, expected_binding_digest):
             _fail(
                 "ONTOLOGY_CONTEXT_DATA_BINDING_DIGEST_MISMATCH",
@@ -612,12 +736,6 @@ class OntologyContextProvider:
             snapshot_id=snapshot_id,
             data_binding_digest=expected_binding_digest,
         )
-        proposal_json = json.dumps(
-            proposal.model_dump(mode="json"),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
         return PublishedOntologyContext(
             context_id=context_id,
             ontology_id=self._ontology_id,
@@ -626,8 +744,19 @@ class OntologyContextProvider:
             data_binding_digest=expected_binding_digest,
             application_id=application,
             snapshot_id=snapshot_id,
-            _proposal_json=proposal_json,
+            _proposal_json=publication._proposal_json,
         )
+
+    def resolve_context(
+        self,
+        application_id: str,
+        snapshot: Any,
+        requested_version: str | None = None,
+    ) -> PublishedOntologyContext:
+        """Compatibility wrapper around publication pinning and snapshot binding."""
+
+        publication = self.resolve_published_ontology(requested_version)
+        return self.bind_snapshot(publication, application_id, snapshot)
 
     def build_model_slice(
         self,
@@ -776,6 +905,37 @@ class OntologyContextProvider:
         context = self.resolve_context(application_id, snapshot, requested_version)
         return context, self.build_model_slice(context, capability_references)
 
+    def _publication_id(
+        self,
+        *,
+        ontology_version: str,
+        ontology_digest: str,
+        data_binding_digest: str,
+        published_at: str,
+    ) -> str:
+        identity_payload = {
+            "namespace": "ontology-publication-context-v1",
+            "ontology_id": self._ontology_id,
+            "ontology_version": ontology_version,
+            "ontology_digest": ontology_digest,
+            "data_binding_digest": data_binding_digest,
+            "published_at": published_at,
+        }
+        canonical_identity = json.dumps(
+            identity_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        publication_mac = hmac.new(
+            self._secret,
+            canonical_identity,
+            hashlib.sha256,
+        ).digest()
+        return "pub_" + base64.urlsafe_b64encode(publication_mac).decode(
+            "ascii"
+        ).rstrip("=")
+
     def _context_id(
         self,
         *,
@@ -923,6 +1083,7 @@ __all__ = (
     "OntologyContextProvider",
     "OntologyModelSlice",
     "PublishedOntologyContext",
+    "PublishedOntologyPublication",
     "SafeActionType",
     "SafeAxiom",
     "SafeFunction",

@@ -447,7 +447,7 @@ class PublishedReadProjectionAttestation(BaseModel):
     @classmethod
     def _catalog_attestation_payload(
         cls,
-        context: PublishedOntologyContext,
+        context: Any,
         catalog: ActionCapabilityCatalog,
     ) -> tuple[
         tuple[ReadProjectionContractAttestation, ...],
@@ -509,6 +509,51 @@ class PublishedReadProjectionAttestation(BaseModel):
         return contracts, payload
 
     @classmethod
+    def sign_publication_identity(
+        cls,
+        *,
+        ontology_id: str,
+        ontology_version: str,
+        ontology_digest: str,
+        catalog: ActionCapabilityCatalog,
+        signing_key: bytes | str,
+    ) -> "PublishedReadProjectionAttestation":
+        """Sign an artifact during ontology publication, without case data.
+
+        Runtime request paths must only load and verify the resulting artifact.
+        This entry point deliberately accepts the immutable publication identity
+        instead of requiring a case-bound ``PublishedOntologyContext``.
+        """
+
+        class _PublicationIdentity:
+            pass
+
+        identity = _PublicationIdentity()
+        identity.ontology_id = str(ontology_id or "").strip()
+        identity.ontology_version = str(ontology_version or "").strip()
+        identity.ontology_digest = str(ontology_digest or "").strip()
+        if (
+            identity.ontology_id != "personal-credit"
+            or not identity.ontology_version
+            or not _DIGEST_RE.fullmatch(identity.ontology_digest)
+        ):
+            _reject(
+                "AGENT_CAPABILITY_ATTESTATION_REJECTED",
+                "READ 投影发布身份无效",
+            )
+        key = _attestation_key(signing_key)
+        contracts, payload = cls._catalog_attestation_payload(identity, catalog)
+        return cls(
+            attestation_id="rpa_" + _canonical_sha256(payload),
+            ontology_id=identity.ontology_id,
+            ontology_version=identity.ontology_version,
+            ontology_digest=identity.ontology_digest,
+            projection_version=PERSONAL_CREDIT_READ_PROJECTION_VERSION,
+            contracts=contracts,
+            signature=_attestation_signature(payload, key),
+        )
+
+    @classmethod
     def sign_for_publication(
         cls,
         context: PublishedOntologyContext,
@@ -518,36 +563,41 @@ class PublishedReadProjectionAttestation(BaseModel):
     ) -> "PublishedReadProjectionAttestation":
         """Sign a controlled publication artifact; never call per request."""
 
-        key = _attestation_key(signing_key)
-        contracts, payload = cls._catalog_attestation_payload(context, catalog)
-        return cls(
-            attestation_id="rpa_" + _canonical_sha256(payload),
+        return cls.sign_publication_identity(
             ontology_id=context.ontology_id,
             ontology_version=context.ontology_version,
             ontology_digest=context.ontology_digest,
-            projection_version=PERSONAL_CREDIT_READ_PROJECTION_VERSION,
-            contracts=contracts,
-            signature=_attestation_signature(payload, key),
+            catalog=catalog,
+            signing_key=signing_key,
         )
 
-    def verify(
+    def verify_publication_identity(
         self,
-        context: PublishedOntologyContext,
-        catalog: ActionCapabilityCatalog,
         *,
+        ontology_id: str,
+        ontology_version: str,
+        ontology_digest: str,
+        catalog: ActionCapabilityCatalog,
         verification_key: bytes | str,
     ) -> None:
-        """Verify content and its independent trust-root signature."""
+        """Verify a stored artifact before any case snapshot is loaded."""
 
+        class _PublicationIdentity:
+            pass
+
+        identity = _PublicationIdentity()
+        identity.ontology_id = str(ontology_id or "").strip()
+        identity.ontology_version = str(ontology_version or "").strip()
+        identity.ontology_digest = str(ontology_digest or "").strip()
         key = _attestation_key(verification_key)
         contracts, expected_identity = self._catalog_attestation_payload(
-            context, catalog
+            identity, catalog
         )
         expected_payload = {
             "attestation_id": "rpa_" + _canonical_sha256(expected_identity),
-            "ontology_id": context.ontology_id,
-            "ontology_version": context.ontology_version,
-            "ontology_digest": context.ontology_digest,
+            "ontology_id": identity.ontology_id,
+            "ontology_version": identity.ontology_version,
+            "ontology_digest": identity.ontology_digest,
             "projection_version": PERSONAL_CREDIT_READ_PROJECTION_VERSION,
             "contracts": [item.model_dump(mode="json") for item in contracts],
         }
@@ -561,6 +611,23 @@ class PublishedReadProjectionAttestation(BaseModel):
                 "AGENT_CAPABILITY_ATTESTATION_REJECTED",
                 "READ projection publication artifact 或签名不匹配",
             )
+
+    def verify(
+        self,
+        context: PublishedOntologyContext,
+        catalog: ActionCapabilityCatalog,
+        *,
+        verification_key: bytes | str,
+    ) -> None:
+        """Verify content and its independent trust-root signature."""
+
+        self.verify_publication_identity(
+            ontology_id=context.ontology_id,
+            ontology_version=context.ontology_version,
+            ontology_digest=context.ontology_digest,
+            catalog=catalog,
+            verification_key=verification_key,
+        )
 
     def by_name(self) -> dict[str, ReadProjectionContractAttestation]:
         return {item.name: item.model_copy(deep=True) for item in self.contracts}

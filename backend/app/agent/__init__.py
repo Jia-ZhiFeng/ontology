@@ -24,6 +24,7 @@ from .ontology_context import (
     OntologyContextProvider,
     OntologyModelSlice,
     PublishedOntologyContext,
+    PublishedOntologyPublication,
 )
 from .capability_registry import (
     AgentAuthenticationSource,
@@ -36,6 +37,32 @@ from .capability_registry import (
     AgentPrincipalContext,
     AuthorizedCapabilityDecision,
     PublishedReadProjectionAttestation,
+)
+from .ontology_decisions import (
+    AskUserDecision,
+    CallReadActionsDecision,
+    FinalDecision,
+    LookupOntologyDecision,
+    OntologyAgentDecision,
+    OntologyAgentDecisionKind,
+    OntologyAgentDecisionParseError,
+    ProposeWriteActionDecision,
+    ReadActionCall,
+    ontology_agent_decision_instruction,
+    ontology_agent_decision_json_schema,
+    parse_ontology_agent_decision,
+)
+from .ontology_runtime import (
+    DEFAULT_ONTOLOGY_AGENT_CONVERSATION_STORE,
+    AgentObservation,
+    InMemoryWriteProposal,
+    OntologyAgentBudgetLimits,
+    OntologyAgentRuntime,
+    OntologyAgentRuntimeError,
+)
+from .read_projection_repository import (
+    PostgresReadProjectionAttestationRepository,
+    ReadProjectionAttestationRepositoryError,
 )
 
 __all__ = (
@@ -56,6 +83,7 @@ __all__ = (
     "OntologyContextProvider",
     "OntologyModelSlice",
     "PublishedOntologyContext",
+    "PublishedOntologyPublication",
     "AgentAuthenticationSource",
     "AgentCapabilityAllowlist",
     "AgentCapabilityDecision",
@@ -66,4 +94,24 @@ __all__ = (
     "AgentPrincipalContext",
     "AuthorizedCapabilityDecision",
     "PublishedReadProjectionAttestation",
+    "AskUserDecision",
+    "CallReadActionsDecision",
+    "FinalDecision",
+    "LookupOntologyDecision",
+    "OntologyAgentDecision",
+    "OntologyAgentDecisionKind",
+    "OntologyAgentDecisionParseError",
+    "ProposeWriteActionDecision",
+    "ReadActionCall",
+    "ontology_agent_decision_instruction",
+    "ontology_agent_decision_json_schema",
+    "parse_ontology_agent_decision",
+    "DEFAULT_ONTOLOGY_AGENT_CONVERSATION_STORE",
+    "AgentObservation",
+    "InMemoryWriteProposal",
+    "OntologyAgentBudgetLimits",
+    "OntologyAgentRuntime",
+    "OntologyAgentRuntimeError",
+    "PostgresReadProjectionAttestationRepository",
+    "ReadProjectionAttestationRepositoryError",
 )

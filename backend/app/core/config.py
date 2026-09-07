@@ -51,6 +51,15 @@ WORKBENCH_UNAUTHENTICATED=os.getenv(
 PERSONAL_CREDIT_AGENT_MODE=parse_personal_credit_agent_mode(
     os.getenv("PERSONAL_CREDIT_AGENT_MODE","legacy")
 ).value
+# Dedicated trust roots for the ontology Agent. They intentionally do not
+# fall back to the workbench or model credential; ontology mode fails closed
+# until both contain at least 32 bytes.
+ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET=os.getenv(
+    "ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET",""
+).strip()
+ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY=os.getenv(
+    "ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY",""
+).strip()
 MVP_ACTION_ACTOR_ID=os.getenv("MVP_ACTION_ACTOR_ID","mvp-local-operator").strip()
 MVP_ACTION_ACTOR_ROLE=os.getenv("MVP_ACTION_ACTOR_ROLE","风控专员").strip()
 MVP_CREATE_APPLICATION_ACTOR_ID=os.getenv(

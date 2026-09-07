@@ -234,28 +234,35 @@ class SecurityTests(unittest.TestCase):
             "api_key_ciphertext":"encrypted-secret-bytes",
             "authorization":"Bearer provider-secret",
             "access_token":"oauth-access-token",
-            "nested":{"secret":"another-secret","token":"session-token"},
+            "password":"database-password",
+            "nested":{
+                "secret":"another-secret",
+                "token":"session-token",
+                "passwd":"nested-password",
+            },
         }
         text=json.dumps(mask_payload(source),ensure_ascii=False)
         for secret in (
             "sk-live-secret","mvp-access-token","encrypted-secret-bytes",
             "Bearer provider-secret","oauth-access-token","another-secret",
-            "session-token",
+            "session-token","database-password","nested-password",
         ):
             self.assertNotIn(secret,text)
 
     def test_plain_text_error_masking_removes_credential_assignments(self):
         source=(
             "api_key=sk-live-secret; Authorization: Bearer auth-secret "
-            "access_token=oauth-secret token=session-secret secret=root-secret"
+            "access_token=oauth-secret token=session-secret secret=root-secret "
+            "password=hunter2 passwd=db-secret 密码=中文口令"
         )
         masked=mask_payload(source)
         for secret in (
             "sk-live-secret","auth-secret","oauth-secret",
             "session-secret","root-secret",
+            "hunter2","db-secret","中文口令",
         ):
             self.assertNotIn(secret,masked)
-        self.assertGreaterEqual(masked.count("[已脱敏]"),5)
+        self.assertGreaterEqual(masked.count("[已脱敏]"),8)
 
     def test_graph_masking_keeps_edge_endpoints_resolvable(self):
         snapshot={

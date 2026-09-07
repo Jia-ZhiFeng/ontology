@@ -22,7 +22,10 @@ class AgentConversationBusyError(AgentConversationError):
 
 _CONVERSATION_ID = re.compile(r"^pc_[0-9a-f]{32}$")
 _SENSITIVE_PATTERNS = (
-    re.compile(r"(?i)(api[_ -]?key|authorization|bearer|token|secret)\s*[:=]?\s*\S+"),
+    re.compile(
+        r"(?i)(api[_ -]?key|authorization|bearer|token|secret|password|passwd|密码|口令|密钥)"
+        r"\s*[:=：]?\s*\S+"
+    ),
     re.compile(r"(?i)(application[_ -]?id|id[_ -]?number|身份证号|申请编号)\s*[:=：]?\s*[\w-]+"),
     re.compile(r"(?i)(姓名|客户姓名|地址|住址|车架号|vin|银行卡号)\s*[:=：]?\s*[^\s,，;；]{2,80}"),
     re.compile(r"(?i)\b(?:app|loan|case|cust|customer|borrower|vehicle|vin|ra|cr|fr|pv)[-_][a-z0-9_-]{3,}\b"),

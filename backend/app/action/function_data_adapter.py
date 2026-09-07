@@ -110,6 +110,9 @@ class PersonalCreditFunctionDataAdapter:
         column = binding.column_sql
         select = binding.select_sql
         with self.postgres.conn() as connection, connection.cursor() as cursor:
+            # The async ontology runtime can stop awaiting a worker thread, but
+            # PostgreSQL must also terminate the underlying synchronous query.
+            cursor.execute("SET LOCAL statement_timeout = '40000ms'")
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             cursor.execute("""
                 SELECT txid_current_snapshot()::text AS snapshot_id,

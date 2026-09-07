@@ -96,6 +96,14 @@ class ComposeRuntimeConfigTests(unittest.TestCase):
             "PERSONAL_CREDIT_AGENT_MODE: ${PERSONAL_CREDIT_AGENT_MODE:-legacy}",
             backend,
         )
+        self.assertIn(
+            "ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET: ${ONTOLOGY_AGENT_CONTEXT_HMAC_SECRET:-}",
+            backend,
+        )
+        self.assertIn(
+            "ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY: ${ONTOLOGY_AGENT_READ_ATTESTATION_HMAC_KEY:-}",
+            backend,
+        )
 
 
 if __name__ == "__main__":

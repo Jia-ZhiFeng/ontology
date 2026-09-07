@@ -16,7 +16,8 @@ ID_NUMBER_PATTERN=re.compile(r"(?<![0-9A-Za-z])(\d{3})\d{13}([0-9Xx]{2})(?![0-9A
 PHONE_PATTERN=re.compile(r"(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)")
 CREDENTIAL_PATTERN=re.compile(
     r"(?i)(?P<key>\b(?:api[_ -]?key|x-api-key|authorization|"
-    r"access[_ -]?token|token|secret)\b)"
+    r"access[_ -]?token|session[_ -]?token|token|secret|client[_ -]?secret|"
+    r"password|passwd|pwd|credential|private[_ -]?key)\b|密码|口令|密钥)"
     r"(?P<separator>[\"']?\s*[:=]\s*)(?:bearer\s+)?"
     r"(?P<value>[^\s,;}\]]+)"
 )
@@ -30,7 +31,8 @@ LOCAL_SESSION_SAFE_METHODS={"GET","HEAD","OPTIONS"}
 
 SENSITIVE_KEYS={
     "api_key","x_api_key","api_key_ciphertext","authorization",
-    "access_token","token","secret",
+    "access_token","session_token","token","secret","client_secret",
+    "password","passwd","pwd","credential","private_key","cookie",
     "id_number","borrower_id","guarantor_id","co_borrower_id","subject_id_number",
     "phone","address","location","monthly_income","employer","guarantee_total",
     "loan_amount","invoice_price","guide_price","creditor","balance","risk_factors",
