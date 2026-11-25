@@ -12,6 +12,7 @@ NEBULA_PORT=int(os.getenv("NEBULA_PORT","9669"))
 NEBULA_USER=os.getenv("NEBULA_USER","root")
 NEBULA_PASSWORD=os.getenv("NEBULA_PASSWORD","nebula")
 NEBULA_SPACE=os.getenv("NEBULA_SPACE","credit_ontology")
+NEBULA_REQUEST_TIMEOUT_MS=max(1000,min(int(os.getenv("NEBULA_REQUEST_TIMEOUT_MS","10000")),60000))
 CORS_ORIGINS=os.getenv(
     "CORS_ORIGINS",
     "http://localhost:8080,http://127.0.0.1:8080,"

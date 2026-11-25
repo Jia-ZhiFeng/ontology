@@ -663,6 +663,7 @@ class PostgresPersonalCreditWorkflowRepository:
         workflow_id: str,
         action_name: str,
         *,
+        dispatch_request_id: str,
         execution_id: str,
         action_status: str,
         result_summary: Mapping[str, Any] | None,
@@ -681,6 +682,13 @@ class PostgresPersonalCreditWorkflowRepository:
                 (workflow_id, action_name),
             )
             step = cursor.fetchone()
+            if not step or step.get("dispatch_request_id") != dispatch_request_id:
+                raise WorkflowError("WORKFLOW_STEP_CONFLICT", "流程步骤派发权已变化")
+            # Reconciliation may finish this exact execution before the HTTP
+            # handler returns from its worker thread. Preserve that terminal state.
+            if (step["status"] in {"COMPLETED", "FAILED"}
+                    and step.get("execution_id") == execution_id):
+                return self._detail(cursor, workflow)
             if not step or step["status"] not in {"RUNNING", "WAITING"}:
                 raise WorkflowError("WORKFLOW_STEP_CONFLICT", "流程步骤派发状态已变化")
             if action_status == "SUCCEEDED":
@@ -740,6 +748,7 @@ class PostgresPersonalCreditWorkflowRepository:
         workflow_id: str,
         action_name: str,
         *,
+        dispatch_request_id: str,
         execution_id: str | None,
         error_code: str,
         error_message: str,
@@ -757,6 +766,8 @@ class PostgresPersonalCreditWorkflowRepository:
                 (workflow_id, action_name),
             )
             step = cursor.fetchone()
+            if not step or step.get("dispatch_request_id") != dispatch_request_id:
+                raise WorkflowError("WORKFLOW_STEP_CONFLICT", "流程步骤派发权已变化")
             if not step or step["status"] not in {"RUNNING", "WAITING"}:
                 raise WorkflowError("WORKFLOW_STEP_CONFLICT", "流程步骤派发状态已变化")
             target = (

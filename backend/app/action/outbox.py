@@ -43,6 +43,8 @@ from .phone_dispatch import (
     PostgresPhoneDispatchCoordinator,
 )
 from .operations import ExternalCircuitOpenError
+from ..ontology.models import OntologyProposal
+from ..ontology.version_repository import OntologyVersionRepository
 from .phone_verification_repository import (
     PhoneVerificationPersistenceError,
     PostgresPhoneVerificationTaskRepository,
@@ -662,6 +664,21 @@ class RiskAssessmentOutboxWorker:
     def _sync_and_verify(self, proposal) -> dict[str, Any]:
         if self.sync_handler:
             return dict(self.sync_handler(proposal))
+        versions = OntologyVersionRepository(self.postgres)
+        # Publication, manual sync and every outbox handler share this lock.
+        # Read the snapshot only after acquiring it, so an older snapshot cannot
+        # arrive after (and delete) a newer projection. Execution/audit identity
+        # remains pinned to the event version; the shared graph uses active TBox.
+        with versions.publication_guard():
+            active = versions.active()
+            if not active:
+                raise OutboxHandlerError(
+                    "ACTION_ACTIVE_PROJECTION_UNAVAILABLE", "没有已发布的活动图投影版本"
+                )
+            projection = OntologyProposal.model_validate(active["proposal"])
+            return self._sync_active_projection(projection)
+
+    def _sync_active_projection(self, proposal) -> dict[str, Any]:
         profile = self.postgres.validation_profile()
         data_quality = validate_catalog_data_quality(proposal, profile)
         if not data_quality.get("valid"):
@@ -687,6 +704,7 @@ class RiskAssessmentOutboxWorker:
                 "NebulaGraph 同步后的映射校验失败",
             )
         return {
+            "projection_ontology_version": proposal.version,
             "synchronization": synchronization,
             "mapping_summary": mapping.get("summary"),
             "data_quality": data_quality.get("status"),

@@ -11,6 +11,8 @@ from fastapi import APIRouter,HTTPException,Query,Request,Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel,ConfigDict,Field,SecretStr
+from starlette.concurrency import run_in_threadpool
+from ..core.concurrency import threaded_endpoint
 from ..core.config import *
 from ..core.agent_runtime import PersonalCreditAgentMode
 from ..postgres.client import PostgresService
@@ -38,6 +40,7 @@ from ..core.security import (
     api_key_matches,
     external_llm_auth_error,
     mask_graph_snapshot,
+    mask_schema_payload,
     mask_payload,
 )
 from ..ontology.versioning import VersionWorkflowError,review_release_candidate
@@ -781,7 +784,8 @@ def _decision_recommendation_http_status(code:str)->int:
     return 500
 
 @router.post("/actions/create-loan-application/execute")
-async def execute_create_loan_application(req:CreateLoanApplicationRequest):
+@threaded_endpoint
+def execute_create_loan_application(req:CreateLoanApplicationRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -816,7 +820,8 @@ async def execute_create_loan_application(req:CreateLoanApplicationRequest):
         }))
 
 @router.post("/actions/generate-risk-assessment/execute")
-async def execute_generate_risk_assessment(req:GenerateRiskAssessmentRequest):
+@threaded_endpoint
+def execute_generate_risk_assessment(req:GenerateRiskAssessmentRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -851,7 +856,8 @@ async def execute_generate_risk_assessment(req:GenerateRiskAssessmentRequest):
         }))
 
 @router.post("/actions/request-credit-report/execute")
-async def execute_request_credit_report(req:RequestCreditReportRequest):
+@threaded_endpoint
+def execute_request_credit_report(req:RequestCreditReportRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -891,7 +897,8 @@ async def execute_request_credit_report(req:RequestCreditReportRequest):
         }))
 
 @router.post("/actions/request-fraud-report/execute")
-async def execute_request_fraud_report(req:RequestFraudReportRequest):
+@threaded_endpoint
+def execute_request_fraud_report(req:RequestFraudReportRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -930,7 +937,8 @@ async def execute_request_fraud_report(req:RequestFraudReportRequest):
         }))
 
 @router.post("/actions/create-phone-verification-task/execute")
-async def execute_create_phone_verification_task(
+@threaded_endpoint
+def execute_create_phone_verification_task(
     req:CreatePhoneVerificationTaskRequest,
 ):
     service_postgres=postgres()
@@ -979,7 +987,8 @@ async def execute_create_phone_verification_task(
         }))
 
 @router.post("/actions/record-phone-verification/execute")
-async def execute_record_phone_verification(req:RecordPhoneVerificationRequest):
+@threaded_endpoint
+def execute_record_phone_verification(req:RecordPhoneVerificationRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -1019,7 +1028,8 @@ async def execute_record_phone_verification(req:RecordPhoneVerificationRequest):
         }))
 
 @router.post("/actions/trigger-manual-review/execute")
-async def execute_trigger_manual_review(req:TriggerManualReviewRequest):
+@threaded_endpoint
+def execute_trigger_manual_review(req:TriggerManualReviewRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     proposal=active_version_proposal()
@@ -1059,7 +1069,8 @@ async def execute_trigger_manual_review(req:TriggerManualReviewRequest):
         }))
 
 @router.post("/actions/record-decision-recommendation/execute")
-async def execute_record_decision_recommendation(
+@threaded_endpoint
+def execute_record_decision_recommendation(
     req:RecordDecisionRecommendationRequest,
 ):
     service_postgres=postgres()
@@ -1101,7 +1112,8 @@ async def execute_record_decision_recommendation(
         }))
 
 @router.get("/actions/executions/{execution_id}")
-async def get_action_execution(execution_id:str):
+@threaded_endpoint
+def get_action_execution(execution_id:str):
     repository=PostgresActionExecutionRepository(postgres())
     try:
         record=repository.get(execution_id)
@@ -1335,7 +1347,8 @@ def _build_ontology_personal_credit_agent(
 
 
 @router.get("/actions/reuse-catalog")
-async def action_reuse_catalog():
+@threaded_endpoint
+def action_reuse_catalog():
     return {
         **build_action_reuse_audit(),
         "registered_ontologies":[ONTOLOGY_PERSONAL_CREDIT],
@@ -1343,7 +1356,8 @@ async def action_reuse_catalog():
 
 
 @router.get("/ontologies/{ontology_id}/actions")
-async def list_registered_ontology_actions(ontology_id:str):
+@threaded_endpoint
+def list_registered_ontology_actions(ontology_id:str):
     try:
         proposal=active_version_proposal()
         _require_registered_action_version(
@@ -1359,7 +1373,8 @@ async def list_registered_ontology_actions(ontology_id:str):
 
 
 @router.get("/ontologies/{ontology_id}/versions/{ontology_version}/actions")
-async def list_registered_ontology_version_actions(
+@threaded_endpoint
+def list_registered_ontology_version_actions(
     ontology_id:str,ontology_version:str
 ):
     try:
@@ -1432,7 +1447,7 @@ def _action_runtime_compatibility_errors(proposal:OntologyProposal)->list[str]:
 async def _execute_registered_action_version(
     ontology_id:str,ontology_version:str,action_name:str,payload:dict[str,Any]
 ):
-    _require_registered_action_version(
+    await run_in_threadpool(_require_registered_action_version,
         ontology_id,ontology_version,action_name=action_name
     )
     token=_ACTION_ONTOLOGY_VERSION_OVERRIDE.set(ontology_version)
@@ -1450,7 +1465,7 @@ async def execute_registered_ontology_action(
     ontology_id:str,action_name:str,payload:dict[str,Any]
 ):
     try:
-        proposal=active_version_proposal()
+        proposal=await run_in_threadpool(active_version_proposal)
         return await _execute_registered_action_version(
             ontology_id,proposal.version,action_name,payload
         )
@@ -1560,7 +1575,8 @@ def _workflow_action_result(value):
     return value
 
 @router.post("/workflows/personal-credit")
-async def start_personal_credit_workflow(req:StartPersonalCreditWorkflowRequest):
+@threaded_endpoint
+def start_personal_credit_workflow(req:StartPersonalCreditWorkflowRequest):
     try:
         proposal=active_version_proposal()
         return mask_payload(_workflow_repository().create(
@@ -1575,11 +1591,13 @@ async def start_personal_credit_workflow(req:StartPersonalCreditWorkflowRequest)
         _raise_workflow_http(error)
 
 @router.get("/workflows/personal-credit/summary")
-async def personal_credit_workflow_summary():
+@threaded_endpoint
+def personal_credit_workflow_summary():
     return _workflow_repository().summary()
 
 @router.get("/workflows/personal-credit")
-async def list_personal_credit_workflows(
+@threaded_endpoint
+def list_personal_credit_workflows(
     status:str|None=None,application_id:str|None=None,limit:int=100
 ):
     try:
@@ -1590,7 +1608,8 @@ async def list_personal_credit_workflows(
         _raise_workflow_http(error)
 
 @router.get("/workflows/personal-credit/definition")
-async def personal_credit_workflow_definition():
+@threaded_endpoint
+def personal_credit_workflow_definition():
     proposal=active_version_proposal()
     return {
         "workflow_version":"personal-credit-workflow-v1",
@@ -1625,7 +1644,8 @@ async def personal_credit_workflow_definition():
     }
 
 @router.post("/workflows/personal-credit/data-search")
-async def search_personal_credit_workflow_data(
+@threaded_endpoint
+def search_personal_credit_workflow_data(
     req:WorkflowDataSearchRequest,response:Response
 ):
     try:
@@ -1639,14 +1659,16 @@ async def search_personal_credit_workflow_data(
         raise HTTPException(400,error_detail(error))
 
 @router.get("/workflows/personal-credit/{workflow_id}")
-async def get_personal_credit_workflow(workflow_id:str):
+@threaded_endpoint
+def get_personal_credit_workflow(workflow_id:str):
     try:
         return mask_payload(_workflow_repository().get(workflow_id))
     except WorkflowError as error:
         _raise_workflow_http(error)
 
 @router.post("/workflows/personal-credit/{workflow_id}/refresh")
-async def refresh_personal_credit_workflow(workflow_id:str):
+@threaded_endpoint
+def refresh_personal_credit_workflow(workflow_id:str):
     try:
         return mask_payload(_workflow_repository().reconcile(
             workflow_id,actor_id=MVP_WORKFLOW_ACTOR_ID
@@ -1663,12 +1685,15 @@ async def execute_personal_credit_workflow_step(
     if action_name not in WORKFLOW_ACTIONS:
         _raise_workflow_http(WorkflowError("WORKFLOW_STEP_NOT_FOUND","流程步骤不存在"))
     repository=_workflow_repository()
+    dispatch_started=False
+    dispatch_request_id=f"wf-{uuid4()}"
     try:
-        detail=repository.get(workflow_id)
+        detail=await run_in_threadpool(repository.get,workflow_id)
         workflow=detail["workflow"]
         pinned_ontology_version=workflow["ontology_version"]
         try:
-            _require_registered_action_version(
+            await run_in_threadpool(
+                _require_registered_action_version,
                 ONTOLOGY_PERSONAL_CREDIT,
                 pinned_ontology_version,
                 action_name=action_name,
@@ -1678,8 +1703,8 @@ async def execute_personal_credit_workflow_step(
                 "WORKFLOW_ONTOLOGY_VERSION_UNAVAILABLE",
                 f"流程锁定的本体版本不可执行：{error}",
             ) from error
-        dispatch_request_id=f"wf-{uuid4()}"
-        model=_workflow_action_payload(
+        model=await run_in_threadpool(
+            _workflow_action_payload,
             action_name=action_name,
             payload=req.payload,
             application_id=workflow["application_id"],
@@ -1688,8 +1713,9 @@ async def execute_personal_credit_workflow_step(
         )
         model_payload=model.model_dump(mode="json")
         input_summary=model.model_dump(mode="json",exclude_none=True)
-        repository.validate_step_scope(workflow_id,action_name,model_payload)
-        repository.begin_step(
+        await run_in_threadpool(repository.validate_step_scope,workflow_id,action_name,model_payload)
+        await run_in_threadpool(
+            repository.begin_step,
             workflow_id,
             action_name,
             dispatch_request_id=dispatch_request_id,
@@ -1697,6 +1723,7 @@ async def execute_personal_credit_workflow_step(
             input_summary=input_summary,
             actor_id=MVP_WORKFLOW_ACTOR_ID,
         )
+        dispatch_started=True
         try:
             token=_ACTION_ONTOLOGY_VERSION_OVERRIDE.set(pinned_ontology_version)
             try:
@@ -1715,9 +1742,11 @@ async def execute_personal_credit_workflow_step(
                 action_detail.get("message")
                 or (detail_value if isinstance(detail_value,str) else "Action 执行失败")
             )
-            repository.record_dispatch_failure(
+            await run_in_threadpool(
+                repository.record_dispatch_failure,
                 workflow_id,
                 action_name,
+                dispatch_request_id=dispatch_request_id,
                 execution_id=action_detail.get("execution_id"),
                 error_code=error_code,
                 error_message=error_message,
@@ -1734,9 +1763,11 @@ async def execute_personal_credit_workflow_step(
                 "WORKFLOW_ACTION_RESPONSE_INVALID",
                 "Action 响应缺少 execution_id 或 status",
             )
-        return mask_payload(repository.attach_action_result(
+        return mask_payload(await run_in_threadpool(
+            repository.attach_action_result,
             workflow_id,
             action_name,
+            dispatch_request_id=dispatch_request_id,
             execution_id=str(execution_id),
             action_status=str(action_status),
             result_summary=result,
@@ -1746,15 +1777,18 @@ async def execute_personal_credit_workflow_step(
         ))
     except WorkflowError as error:
         try:
-            current=repository.get(workflow_id)
+            current=await run_in_threadpool(repository.get,workflow_id) if dispatch_started else None
             matching=next(
-                (item for item in current["steps"] if item["action_name"]==action_name),
+                (item for item in (current or {}).get("steps",[]) if item["action_name"]==action_name),
                 None,
             )
-            if matching and matching["status"] in {"RUNNING","WAITING"}:
-                repository.record_dispatch_failure(
+            if (matching and matching["status"] in {"RUNNING","WAITING"}
+                    and matching.get("dispatch_request_id")==dispatch_request_id):
+                await run_in_threadpool(
+                    repository.record_dispatch_failure,
                     workflow_id,
                     action_name,
+                    dispatch_request_id=dispatch_request_id,
                     execution_id=matching.get("execution_id"),
                     error_code=error.code,
                     error_message=error_detail(error),
@@ -1765,7 +1799,8 @@ async def execute_personal_credit_workflow_step(
         _raise_workflow_http(error)
 
 @router.post("/workflows/personal-credit/{workflow_id}/steps/{action_name}/skip")
-async def skip_personal_credit_workflow_step(
+@threaded_endpoint
+def skip_personal_credit_workflow_step(
     workflow_id:str,action_name:str,req:WorkflowReasonRequest
 ):
     try:
@@ -1776,7 +1811,8 @@ async def skip_personal_credit_workflow_step(
         _raise_workflow_http(error)
 
 @router.post("/workflows/personal-credit/{workflow_id}/cancel")
-async def cancel_personal_credit_workflow(
+@threaded_endpoint
+def cancel_personal_credit_workflow(
     workflow_id:str,req:WorkflowReasonRequest
 ):
     try:
@@ -1787,7 +1823,8 @@ async def cancel_personal_credit_workflow(
         _raise_workflow_http(error)
 
 @router.get("/actions/outbox")
-async def list_action_outbox(status:str|None=None,limit:int=100):
+@threaded_endpoint
+def list_action_outbox(status:str|None=None,limit:int=100):
     try:
         return mask_payload({
             "events":PostgresActionOutboxRepository(postgres()).list_events(
@@ -1798,25 +1835,29 @@ async def list_action_outbox(status:str|None=None,limit:int=100):
         raise HTTPException(400,error_detail(e))
 
 @router.get("/actions/outbox/status")
-async def action_outbox_status():
+@threaded_endpoint
+def action_outbox_status():
     return PostgresActionOutboxRepository(postgres()).status_summary(
         lease_seconds=ACTION_OUTBOX_LEASE_SECONDS
     )
 
 @router.get("/actions/outbox/alerts")
-async def action_outbox_alerts(limit:int=100):
+@threaded_endpoint
+def action_outbox_alerts(limit:int=100):
     repository=PostgresOutboxReplayRepository(postgres())
     return mask_payload(repository.alerts(
         lease_seconds=ACTION_OUTBOX_LEASE_SECONDS,limit=limit
     ))
 
 @router.get("/actions/outbox/replays")
-async def action_outbox_replays(limit:int=100):
+@threaded_endpoint
+def action_outbox_replays(limit:int=100):
     repository=PostgresOutboxReplayRepository(postgres())
     return mask_payload({"replays":repository.list_requests(limit=limit)})
 
 @router.post("/actions/outbox/{event_id}/replay")
-async def replay_action_outbox(event_id:str,req:OutboxReplayRequest):
+@threaded_endpoint
+def replay_action_outbox(event_id:str,req:OutboxReplayRequest):
     service_postgres=postgres()
     execution_repository=PostgresActionExecutionRepository(service_postgres)
     outbox_repository=PostgresActionOutboxRepository(service_postgres)
@@ -1859,7 +1900,8 @@ async def replay_action_outbox(event_id:str,req:OutboxReplayRequest):
         raise HTTPException(status,mask_payload({"code":e.code,"message":error_detail(e)}))
 
 @router.get("/operations/summary")
-async def operations_summary():
+@threaded_endpoint
+def operations_summary():
     service_postgres=postgres()
     alerts=PostgresOperationalAlertRepository(service_postgres).summary()
     circuits=PostgresCircuitBreakerRepository(service_postgres).list_circuits()
@@ -1872,7 +1914,8 @@ async def operations_summary():
     })
 
 @router.get("/operations/alerts")
-async def operations_alerts(status:str|None=None,limit:int=100):
+@threaded_endpoint
+def operations_alerts(status:str|None=None,limit:int=100):
     try:
         return mask_payload({
             "alerts":PostgresOperationalAlertRepository(postgres()).list_alerts(
@@ -1883,13 +1926,15 @@ async def operations_alerts(status:str|None=None,limit:int=100):
         raise HTTPException(422,mask_payload({"code":e.code,"message":error_detail(e)}))
 
 @router.get("/operations/circuits")
-async def operations_circuits():
+@threaded_endpoint
+def operations_circuits():
     return mask_payload({
         "circuits":PostgresCircuitBreakerRepository(postgres()).list_circuits()
     })
 
 @router.post("/operations/alerts/{alert_id}/acknowledge")
-async def acknowledge_operational_alert(alert_id:str,req:AlertActionRequest):
+@threaded_endpoint
+def acknowledge_operational_alert(alert_id:str,req:AlertActionRequest):
     try:
         record=PostgresOperationalAlertRepository(postgres()).transition(
             alert_id,
@@ -1903,7 +1948,8 @@ async def acknowledge_operational_alert(alert_id:str,req:AlertActionRequest):
         raise HTTPException(status,mask_payload({"code":e.code,"message":error_detail(e)}))
 
 @router.post("/operations/alerts/{alert_id}/resolve")
-async def resolve_operational_alert(alert_id:str,req:AlertActionRequest):
+@threaded_endpoint
+def resolve_operational_alert(alert_id:str,req:AlertActionRequest):
     try:
         record=PostgresOperationalAlertRepository(postgres()).transition(
             alert_id,
@@ -1917,7 +1963,8 @@ async def resolve_operational_alert(alert_id:str,req:AlertActionRequest):
         raise HTTPException(status,mask_payload({"code":e.code,"message":error_detail(e)}))
 
 @router.post("/operations/circuits/{dependency_name}/reset")
-async def reset_external_circuit(dependency_name:str,req:AlertActionRequest):
+@threaded_endpoint
+def reset_external_circuit(dependency_name:str,req:AlertActionRequest):
     try:
         service_postgres=postgres()
         circuit=PostgresCircuitBreakerRepository(service_postgres).reset(
@@ -1934,16 +1981,19 @@ async def reset_external_circuit(dependency_name:str,req:AlertActionRequest):
         raise HTTPException(status,mask_payload({"code":e.code,"message":error_detail(e)}))
 
 @router.get("/health")
-async def health():
-    n=nebula()
+@threaded_endpoint
+def health():
+    n=None
     try:
         try: postgresql=postgres().ping()
         except Exception: postgresql=False
-        try: nebulagraph=n.ping()
+        try:
+            n=nebula()
+            nebulagraph=n.ping()
         except Exception: nebulagraph=False
         return {"status":"ok" if postgresql and nebulagraph else "degraded","postgresql":postgresql,"nebulagraph":nebulagraph}
     finally:
-        n.close()
+        if n: n.close()
 
 @router.get("/auth/check")
 async def check_mvp_authentication(request:Request):
@@ -1959,22 +2009,26 @@ async def check_mvp_authentication(request:Request):
     }
 
 @router.get("/postgres/schema")
-async def schema():
+@threaded_endpoint
+def schema():
     return postgres().schema()
 
 @router.post("/postgres/profile")
-async def profile(req:ProfileRequest):
+@threaded_endpoint
+def profile(req:ProfileRequest):
     return mask_payload(postgres().profile(req.limit))
 
 @router.get("/postgres/data/{table}")
-async def postgres_data(table:str,limit:int=100,offset:int=0):
+@threaded_endpoint
+def postgres_data(table:str,limit:int=100,offset:int=0):
     try:
         return mask_payload(postgres().table_data(table,limit,offset))
     except ValueError as e:
         raise HTTPException(400,error_detail(e))
 
 @router.get("/llm/configs")
-async def list_llm_configurations():
+@threaded_endpoint
+def list_llm_configurations():
     try:
         items=_llm_configuration_repository().list_configs()
         active=next((item["id"] for item in items if item["is_active"]),None)
@@ -1987,7 +2041,8 @@ async def list_llm_configurations():
         _raise_llm_configuration_http(error)
 
 @router.post("/llm/configs",status_code=201)
-async def create_llm_configuration(req:LLMManagedConfigCreate):
+@threaded_endpoint
+def create_llm_configuration(req:LLMManagedConfigCreate):
     try:
         values=_normalize_managed_llm(req)
         api_key=_secret_text(req.api_key).strip()
@@ -2000,7 +2055,8 @@ async def create_llm_configuration(req:LLMManagedConfigCreate):
         _raise_llm_configuration_http(error)
 
 @router.put("/llm/configs/{configuration_id}")
-async def update_llm_configuration(
+@threaded_endpoint
+def update_llm_configuration(
     configuration_id:UUID,req:LLMManagedConfigUpdate
 ):
     try:
@@ -2022,15 +2078,15 @@ async def test_llm_configuration(configuration_id:UUID):
     provider_completed=False
     configuration_id_text=str(configuration_id)
     try:
-        runtime=repository.get_runtime(configuration_id_text)
+        runtime=await run_in_threadpool(repository.get_runtime,configuration_id_text)
         client=_llm_client_from_values(runtime)
         circuit=_external_circuit(postgres(),"llm-service")
-        circuit.before_call()
+        await run_in_threadpool(circuit.before_call)
         request_started=True
         await client.test()
         provider_completed=True
-        circuit.record_success()
-        return _store_llm_test_result(
+        await run_in_threadpool(circuit.record_success)
+        return await run_in_threadpool(_store_llm_test_result,
             repository,configuration_id_text,runtime,success=True
         )
     except (LLMConfigurationNotFound,LLMConfigurationConflict,
@@ -2042,11 +2098,11 @@ async def test_llm_configuration(configuration_id:UUID):
         raise HTTPException(503,error_detail(error))
     except LLMTransientError as error:
         detail=error_detail(error)
-        _record_llm_circuit_failure(
+        await run_in_threadpool(_record_llm_circuit_failure,
             circuit,"LLM_CONFIGURATION_TEST_TRANSIENT",detail
         )
         if runtime:
-            _store_llm_test_result(
+            await run_in_threadpool(_store_llm_test_result,
                 repository,configuration_id_text,runtime,
                 success=False,error=detail,
             )
@@ -2057,32 +2113,35 @@ async def test_llm_configuration(configuration_id:UUID):
         if provider_completed or not request_started:
             _raise_llm_configuration_http(error)
         detail=error_detail(error)
-        _record_llm_circuit_failure(
+        await run_in_threadpool(_record_llm_circuit_failure,
             circuit,"LLM_CONFIGURATION_TEST_FAILED",detail
         )
         if runtime:
-            _store_llm_test_result(
+            await run_in_threadpool(_store_llm_test_result,
                 repository,configuration_id_text,runtime,
                 success=False,error=detail,
             )
         raise HTTPException(422,detail)
 
 @router.post("/llm/configs/{configuration_id}/activate")
-async def activate_llm_configuration(configuration_id:UUID):
+@threaded_endpoint
+def activate_llm_configuration(configuration_id:UUID):
     try:
         return _llm_configuration_repository().activate(str(configuration_id))
     except Exception as error:
         _raise_llm_configuration_http(error)
 
 @router.post("/llm/configs/{configuration_id}/deactivate")
-async def deactivate_llm_configuration(configuration_id:UUID):
+@threaded_endpoint
+def deactivate_llm_configuration(configuration_id:UUID):
     try:
         return _llm_configuration_repository().deactivate(str(configuration_id))
     except Exception as error:
         _raise_llm_configuration_http(error)
 
 @router.delete("/llm/configs/{configuration_id}")
-async def delete_llm_configuration(
+@threaded_endpoint
+def delete_llm_configuration(
     configuration_id:UUID,version:int=Query(...,ge=1)
 ):
     try:
@@ -2101,19 +2160,20 @@ async def llm_test(cfg:LLMConfig):
         client=_llm_client_from_values(cfg)
         service_postgres=postgres()
         circuit=_external_circuit(service_postgres,"llm-service")
-        circuit.before_call()
+        await run_in_threadpool(circuit.before_call)
         result=await client.test()
-        circuit.record_success()
+        await run_in_threadpool(circuit.record_success)
         return {"result":result}
     except ExternalCircuitOpenError as e:
         raise HTTPException(503,error_detail(e))
     except Exception as e:
         if circuit:
-            circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
+            await run_in_threadpool(circuit.record_failure,"LLM_REQUEST_FAILED",error_detail(e))
         raise HTTPException(400,error_detail(e))
 
 @router.get("/agents/personal-credit/tools")
-async def personal_credit_agent_tools():
+@threaded_endpoint
+def personal_credit_agent_tools():
     selected_mode=PersonalCreditAgentMode(PERSONAL_CREDIT_AGENT_MODE)
     ontology_selected=(
         selected_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT
@@ -2204,7 +2264,8 @@ async def personal_credit_agent_tools():
     }
 
 @router.get("/agents/personal-credit/{application_id}/readiness")
-async def personal_credit_agent_readiness(
+@threaded_endpoint
+def personal_credit_agent_readiness(
     application_id:str,ontology_version:str|None=None
 ):
     try:
@@ -2215,7 +2276,8 @@ async def personal_credit_agent_readiness(
         raise HTTPException(422,error_detail(e))
 
 @router.post("/agents/personal-credit/tools/{tool_name}/execute")
-async def execute_personal_credit_agent_tool(
+@threaded_endpoint
+def execute_personal_credit_agent_tool(
     tool_name:str,req:PersonalCreditAgentToolRequest
 ):
     if tool_name not in READ_ONLY_AGENT_TOOLS:
@@ -2265,7 +2327,7 @@ async def run_personal_credit_agent(
                 ontology_deadline,managed_repository.active_metadata
             )
             if ontology_deadline is not None
-            else managed_repository.active_metadata()
+            else await run_in_threadpool(managed_repository.active_metadata)
         )
     except (asyncio.TimeoutError,TimeoutError):
         raise HTTPException(503,{
@@ -2303,14 +2365,14 @@ async def run_personal_credit_agent(
                 ),
             )
         else:
-            service=_personal_credit_agent(req.ontology_version)
+            service=await run_in_threadpool(_personal_credit_agent,req.ontology_version)
         if active_metadata is not None:
             runtime=(
                 await _ontology_agent_sync_call(
                     ontology_deadline,managed_repository.active_runtime
                 )
                 if ontology_deadline is not None
-                else managed_repository.active_runtime()
+                else await run_in_threadpool(managed_repository.active_runtime)
             )
             client=_llm_client_from_values(runtime) if runtime else None
         else:
@@ -2326,7 +2388,7 @@ async def run_personal_credit_agent(
                 )
             else:
                 circuit=_external_circuit(postgres(),"llm-service")
-                circuit.before_call()
+                await run_in_threadpool(circuit.before_call)
         run_timeout=(
             _ontology_agent_deadline_remaining(ontology_deadline)
             if ontology_deadline is not None else None
@@ -2395,7 +2457,7 @@ async def run_personal_credit_agent(
                         "ontology-agent circuit telemetry failed after completion"
                     )
             else:
-                circuit_callback(*circuit_args)
+                await run_in_threadpool(circuit_callback,*circuit_args)
         return result
     except (asyncio.TimeoutError,TimeoutError):
         logger.warning("ontology-agent request reached its hard deadline")
@@ -2463,7 +2525,7 @@ async def run_personal_credit_agent(
                 "rollback_mode":"legacy",
             })
         if circuit:
-            circuit.record_failure("AGENT_PLANNING_FAILED",error_detail(e))
+            await run_in_threadpool(circuit.record_failure,"AGENT_PLANNING_FAILED",error_detail(e))
         raise HTTPException(422,error_detail(e))
     except Exception as e:
         if agent_mode is PersonalCreditAgentMode.ONTOLOGY_AGENT:
@@ -2474,140 +2536,156 @@ async def run_personal_credit_agent(
                 "rollback_mode":"legacy",
             })
         if circuit:
-            circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
+            await run_in_threadpool(circuit.record_failure,"LLM_REQUEST_FAILED",error_detail(e))
         raise HTTPException(400,error_detail(e))
 
 @router.post("/ontology/generate")
 async def gen(req:GenerateRequest):
     circuit=None
     try:
-        prof=postgres().profile(min(req.limit,5))
+        prof=await run_in_threadpool(postgres().profile,min(req.limit,5))
         client=_llm_client_from_values(req.llm)
         circuit=_external_circuit(postgres(),"llm-service")
-        circuit.before_call()
+        await run_in_threadpool(circuit.before_call)
         p=await generate(client,prof)
-        circuit.record_success()
+        await run_in_threadpool(circuit.record_success)
         return {"proposal":p.model_dump(),"validation_errors":validate(p)}
     except ExternalCircuitOpenError as e:
         raise HTTPException(503,error_detail(e))
     except Exception as e:
         if circuit:
-            circuit.record_failure("LLM_REQUEST_FAILED",error_detail(e))
+            await run_in_threadpool(circuit.record_failure,"LLM_REQUEST_FAILED",error_detail(e))
         raise HTTPException(400,error_detail(e))
 
 @router.get("/ontology/baseline")
-async def ontology_baseline():
+@threaded_endpoint
+def ontology_baseline():
     proposal=build_personal_credit_baseline()
     return {"proposal":proposal.model_dump(),"validation_errors":validate(proposal),"axiom_executability":axiom_executability(proposal)}
 
 @router.post("/ontology/validate")
-async def val(req:ProposalRequest):
+@threaded_endpoint
+def val(req:ProposalRequest):
     e=validate(req.proposal)
     return {"valid":not e,"errors":e}
 
 @router.post("/ontology/audit")
-async def ontology_audit(req:ProposalRequest):
+@threaded_endpoint
+def ontology_audit(req:ProposalRequest):
     try:
         profile=postgres().validation_profile()
         execution=execute_axioms(req.proposal,profile)
-        return mask_payload(audit_personal_credit_proposal(req.proposal,profile["tables"],execution))
+        return mask_schema_payload(audit_personal_credit_proposal(req.proposal,profile["tables"],execution))
     except Exception as e:
         raise HTTPException(400,error_detail(e))
 
 @router.get("/ontology/axioms/validate")
-async def validate_current_axioms():
+@threaded_endpoint
+def validate_current_axioms():
     try:
         proposal=build_personal_credit_baseline()
-        return mask_payload(execute_axioms(proposal,postgres().validation_profile()))
+        return mask_schema_payload(execute_axioms(proposal,postgres().validation_profile()))
     except Exception as e:
         raise HTTPException(400,error_detail(e))
 
 @router.post("/ontology/axioms/validate")
-async def validate_proposal_axioms(req:ProposalRequest):
+@threaded_endpoint
+def validate_proposal_axioms(req:ProposalRequest):
     try:
-        return mask_payload(execute_axioms(req.proposal,postgres().validation_profile()))
+        return mask_schema_payload(execute_axioms(req.proposal,postgres().validation_profile()))
     except Exception as e:
         raise HTTPException(400,error_detail(e))
 
 @router.get("/ontology/data-quality/validate")
-async def validate_current_data_quality():
+@threaded_endpoint
+def validate_current_data_quality():
     try:
         proposal=active_version_proposal()
-        return mask_payload(validate_catalog_data_quality(proposal,postgres().validation_profile()))
+        return mask_schema_payload(validate_catalog_data_quality(proposal,postgres().validation_profile()))
     except Exception as e:
         raise HTTPException(400,error_detail(e))
 
 @router.post("/ontology/data-quality/validate")
-async def validate_proposal_data_quality(req:ProposalRequest):
+@threaded_endpoint
+def validate_proposal_data_quality(req:ProposalRequest):
     try:
-        return mask_payload(validate_catalog_data_quality(req.proposal,postgres().validation_profile()))
+        return mask_schema_payload(validate_catalog_data_quality(req.proposal,postgres().validation_profile()))
     except Exception as e:
         raise HTTPException(400,error_detail(e))
 
 @router.post("/ontology/approve")
-async def approve():
+@threaded_endpoint
+def approve():
     raise HTTPException(409,"直接发布入口已关闭；请依次保存草稿、审核、批准并发布登记版本")
 
 @router.get("/ontology/git/status")
-async def ontology_git_status():
+@threaded_endpoint
+def ontology_git_status():
     try:
         ensure_ontology_git()
         branches=ontology_git.list_branches(); tags=ontology_git.list_tags()
         default=next((item for item in branches if item["is_default"]),None)
-        return mask_payload({"default_branch":default["name"] if default else "main","head":default.get("head_commit_id") if default else None,"branches":branches,"tags":tags})
+        return mask_schema_payload({"default_branch":default["name"] if default else "main","head":default.get("head_commit_id") if default else None,"branches":branches,"tags":tags})
     except Exception as e:
         raise HTTPException(500,error_detail(e))
 
 @router.get("/ontology/git/log")
-async def ontology_git_log(ref:str="main",limit:int=50):
+@threaded_endpoint
+def ontology_git_log(ref:str="main",limit:int=50):
     try:
         ensure_ontology_git()
-        return mask_payload({"ref":ref,"commits":ontology_git.log(ref,limit)})
+        return mask_schema_payload({"ref":ref,"commits":ontology_git.log(ref,limit)})
     except OntologyGitError as e:
         raise HTTPException(404,error_detail(e))
 
 @router.get("/ontology/git/diff")
-async def ontology_git_diff(from_ref:str,to_ref:str):
+@threaded_endpoint
+def ontology_git_diff(from_ref:str,to_ref:str):
     try:
         ensure_ontology_git()
-        return mask_payload(ontology_git.diff(from_ref,to_ref))
+        return mask_schema_payload(ontology_git.diff(from_ref,to_ref))
     except OntologyGitError as e:
         raise HTTPException(404,error_detail(e))
 
 @router.post("/ontology/git/commits")
-async def ontology_git_commit(req:OntologyGitCommitRequest):
+@threaded_endpoint
+def ontology_git_commit(req:OntologyGitCommitRequest):
     try:
         ensure_ontology_git()
-        return mask_payload(ontology_git.commit(req.branch,req.proposal,req.message,req.author,req.expected_head))
+        return mask_schema_payload(ontology_git.commit(req.branch,req.proposal,req.message,req.author,req.expected_head))
     except OntologyGitError as e:
         raise HTTPException(409,error_detail(e))
 
 @router.post("/ontology/git/branches")
-async def ontology_git_create_branch(req:OntologyGitBranchRequest):
+@threaded_endpoint
+def ontology_git_create_branch(req:OntologyGitBranchRequest):
     try:
         ensure_ontology_git()
-        return mask_payload(ontology_git.create_branch(req.name,req.from_ref))
+        return mask_schema_payload(ontology_git.create_branch(req.name,req.from_ref))
     except OntologyGitError as e:
         raise HTTPException(409,error_detail(e))
 
 @router.post("/ontology/git/tags")
-async def ontology_git_create_tag(req:OntologyGitTagRequest):
+@threaded_endpoint
+def ontology_git_create_tag(req:OntologyGitTagRequest):
     try:
         ensure_ontology_git()
-        return mask_payload(ontology_git.create_tag(req.name,req.ref,req.message))
+        return mask_schema_payload(ontology_git.create_tag(req.name,req.ref,req.message))
     except OntologyGitError as e:
         raise HTTPException(409,error_detail(e))
 
 @router.get("/ontology/git/show/{ref:path}")
-async def ontology_git_show(ref:str):
+@threaded_endpoint
+def ontology_git_show(ref:str):
     try:
         ensure_ontology_git()
-        return mask_payload(ontology_git.show(ref))
+        return mask_schema_payload(ontology_git.show(ref))
     except OntologyGitError as e:
         raise HTTPException(404,error_detail(e))
 
 @router.get("/ontology/versions")
-async def list_ontology_versions():
+@threaded_endpoint
+def list_ontology_versions():
     try:
         ensure_version_registry()
         return {"versions":version_store.list_versions(),"active_version":(version_store.active() or {}).get("version")}
@@ -2615,7 +2693,8 @@ async def list_ontology_versions():
         raise HTTPException(500,error_detail(e))
 
 @router.get("/ontology/version-events")
-async def list_ontology_version_events(limit:int=100):
+@threaded_endpoint
+def list_ontology_version_events(limit:int=100):
     try:
         ensure_version_registry()
         return {"events":version_store.list_events(limit)}
@@ -2623,23 +2702,26 @@ async def list_ontology_version_events(limit:int=100):
         raise HTTPException(500,error_detail(e))
 
 @router.get("/ontology/versions/{version}")
-async def get_ontology_version(version:str):
+@threaded_endpoint
+def get_ontology_version(version:str):
     try:
         ensure_version_registry()
-        return mask_payload(version_store.get(version))
+        return mask_schema_payload(version_store.get(version))
     except VersionWorkflowError as e:
         raise HTTPException(404,error_detail(e))
 
 @router.post("/ontology/versions/drafts")
-async def save_ontology_draft(req:DraftRequest):
+@threaded_endpoint
+def save_ontology_draft(req:DraftRequest):
     try:
         ensure_version_registry()
-        return mask_payload(version_store.save_draft(req.proposal,req.notes))
+        return mask_schema_payload(version_store.save_draft(req.proposal,req.notes))
     except VersionWorkflowError as e:
         raise HTTPException(409,error_detail(e))
 
 @router.post("/ontology/versions/{version}/review")
-async def review_ontology_draft(version:str,req:WorkflowNoteRequest):
+@threaded_endpoint
+def review_ontology_draft(version:str,req:WorkflowNoteRequest):
     try:
         ensure_version_registry(); record=version_store.get(version)
         if record["status"]!="draft": raise VersionWorkflowError("只有 draft 状态可以提交审核")
@@ -2648,17 +2730,18 @@ async def review_ontology_draft(version:str,req:WorkflowNoteRequest):
         audit=review_release_candidate(proposal,profile,previous)
         if not audit["valid"]:
             version_store.record_review_attempt(version,audit,req.note)
-            return mask_payload({"status":"review_failed","version":version,"audit":audit})
+            return mask_schema_payload({"status":"review_failed","version":version,"audit":audit})
         updated=version_store.mark_reviewed(version,audit,req.note)
-        return mask_payload({"status":"reviewed","version":updated,"audit":audit})
+        return mask_schema_payload({"status":"reviewed","version":updated,"audit":audit})
     except VersionWorkflowError as e:
         raise HTTPException(409,error_detail(e))
 
 @router.post("/ontology/versions/{version}/approve")
-async def approve_ontology_version(version:str,req:WorkflowNoteRequest):
+@threaded_endpoint
+def approve_ontology_version(version:str,req:WorkflowNoteRequest):
     try:
         ensure_version_registry()
-        return mask_payload({"status":"approved","version":version_store.mark_approved(version,req.note)})
+        return mask_schema_payload({"status":"approved","version":version_store.mark_approved(version,req.note)})
     except VersionWorkflowError as e:
         raise HTTPException(409,error_detail(e))
 
@@ -2744,42 +2827,48 @@ def _switch_published_version(version:str,action:str):
             n.close()
 
 @router.post("/ontology/versions/{version}/publish")
-async def publish_ontology_version(version:str):
+@threaded_endpoint
+def publish_ontology_version(version:str):
     try: return _switch_published_version(version,"publish")
     except VersionWorkflowError as e: raise HTTPException(409,error_detail(e))
     except Exception as e: raise HTTPException(500,error_detail(e))
 
 @router.post("/ontology/versions/{version}/rollback")
-async def rollback_ontology_version(version:str):
+@threaded_endpoint
+def rollback_ontology_version(version:str):
     try: return _switch_published_version(version,"rollback")
     except VersionWorkflowError as e: raise HTTPException(409,error_detail(e))
     except Exception as e: raise HTTPException(500,error_detail(e))
 
 @router.post("/kg/sync")
-async def sync(req:ProfileRequest):
-    prof=postgres().validation_profile()
-    proposal=active_version_proposal()
-    data_quality=validate_catalog_data_quality(proposal,prof)
-    if not data_quality["valid"]:
-        raise HTTPException(422,mask_payload({"message":"ABox 同步被目录驱动数据质量门禁拦截","data_quality":data_quality}))
-    axiom_validation=execute_axioms(proposal,prof)
-    if not axiom_validation["valid"]:
-        raise HTTPException(422,mask_payload({"message":"ABox 同步被错误级公理拦截","axiom_validation":axiom_validation}))
-    n=nebula()
-    try:
-        result=n.sync_postgres_profile(prof,proposal)
-        return mask_payload({"status":"synced",**result,"data_quality":data_quality,"axiom_validation":axiom_validation,"mapping_report":n.mapping_report(proposal)})
-    finally:
-        n.close()
+@threaded_endpoint
+def sync(req:ProfileRequest):
+    with version_store.publication_guard():
+        prof=postgres().validation_profile()
+        proposal=active_version_proposal()
+        data_quality=validate_catalog_data_quality(proposal,prof)
+        if not data_quality["valid"]:
+            raise HTTPException(422,mask_payload({"message":"ABox 同步被目录驱动数据质量门禁拦截","data_quality":data_quality}))
+        axiom_validation=execute_axioms(proposal,prof)
+        if not axiom_validation["valid"]:
+            raise HTTPException(422,mask_payload({"message":"ABox 同步被错误级公理拦截","axiom_validation":axiom_validation}))
+        n=nebula()
+        try:
+            result=n.sync_postgres_profile(prof,proposal)
+            return mask_payload({"status":"synced",**result,"data_quality":data_quality,"axiom_validation":axiom_validation,"mapping_report":n.mapping_report(proposal)})
+        finally:
+            n.close()
 
 @router.get("/kg/mapping/report")
-async def mapping_report():
+@threaded_endpoint
+def mapping_report():
     n=nebula()
     try: return mask_payload(n.mapping_report(active_version_proposal()))
     finally: n.close()
 
 @router.get("/kg/related/{node_id}")
-async def related(node_id:str,hops:int=1):
+@threaded_endpoint
+def related(node_id:str,hops:int=1):
     n=None
     try:
         n=nebula()
@@ -2790,13 +2879,15 @@ async def related(node_id:str,hops:int=1):
         if n: n.close()
 
 @router.get("/kg/stats")
-async def stats():
+@threaded_endpoint
+def stats():
     n=nebula()
     try: return n.stats()
     finally: n.close()
 
 @router.get("/kg/snapshot")
-async def snapshot(limit:int=300,offset:int=0):
+@threaded_endpoint
+def snapshot(limit:int=300,offset:int=0):
     n=None
     try:
         n=nebula()
@@ -2807,7 +2898,8 @@ async def snapshot(limit:int=300,offset:int=0):
         if n: n.close()
 
 @router.post("/kg/query")
-async def query_graph(req:GraphQueryRequest):
+@threaded_endpoint
+def query_graph(req:GraphQueryRequest):
     n=None
     try:
         n=nebula()

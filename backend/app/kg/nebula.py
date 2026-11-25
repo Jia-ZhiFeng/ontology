@@ -87,9 +87,14 @@ class NebulaGraphService:
     _mutation_lock=threading.RLock()
 
     def __init__(self,host,port,user,password,space):
+        from ..core.config import NEBULA_REQUEST_TIMEOUT_MS
         self.user=user; self.password=password; self.space=space
         self.pool=ConnectionPool()
-        if not self.pool.init([(host,port)],Config()): raise RuntimeError("NebulaGraph connection pool initialization failed")
+        config=Config()
+        config.timeout=NEBULA_REQUEST_TIMEOUT_MS
+        if not self.pool.init([(host,port)],config):
+            self.pool.close()
+            raise RuntimeError("NebulaGraph connection pool initialization failed")
     def close(self): self.pool.close()
     def _run(self,statement,use_space=True):
         with self.pool.session_context(self.user,self.password) as session:

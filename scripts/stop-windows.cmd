@@ -1,3 +1,3 @@
 @echo off
-cd /d %~dp0..
-docker compose down
+call "%~dp0run-windows.cmd" stop %*
+exit /b %errorlevel%

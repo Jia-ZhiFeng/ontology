@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Mapping
+from starlette.concurrency import run_in_threadpool
 
 from ..action.function_data_adapter import FunctionDataAdapterError
 from .conversation import (
@@ -1185,7 +1186,8 @@ class PersonalCreditAgentService:
 
         record_planner("llm" if planner_mode == "llm" else "local_router")
         readiness_started = perf_counter()
-        readiness = self.inspect_case_readiness(
+        readiness = await run_in_threadpool(
+            self.inspect_case_readiness,
             application_id,
             runtime_context=runtime_context,
         )
@@ -1844,7 +1846,8 @@ class PersonalCreditAgentService:
                 )
             elif execute:
                 try:
-                    result = self.execute_tool(
+                    result = await run_in_threadpool(
+                        self.execute_tool,
                         application_id,
                         step["tool_name"],
                         snapshot=runtime_context.get("snapshot"),

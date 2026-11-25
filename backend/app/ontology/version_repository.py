@@ -62,7 +62,7 @@ class OntologyVersionRepository:
 
     @contextmanager
     def publication_guard(self):
-        """Serialize graph publication across backend processes through PostgreSQL."""
+        """Serialize publication and snapshot-to-graph projection across processes."""
         self.ensure_schema()
         connection=self.postgres.conn()
         try:

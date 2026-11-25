@@ -10,7 +10,7 @@ ORDER BY c.table_name,c.ordinal_position"""
 
 class PostgresService:
     def __init__(self, host, port, database, user, password):
-        self.cfg=dict(host=host,port=port,dbname=database,user=user,password=password)
+        self.cfg=dict(host=host,port=port,dbname=database,user=user,password=password,connect_timeout=5)
     def conn(self):
         return psycopg.connect(**self.cfg,row_factory=dict_row)
     def ping(self):

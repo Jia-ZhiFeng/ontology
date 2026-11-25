@@ -10,17 +10,19 @@
 
 - `scripts/action_chain_uat_scenario.json`：当前可重复执行的合成场景和每步预期。
 - `postgres/action_chain_uat_schema.sql`：幂等创建 `mvp_uat.action_chain_scenarios` 与逐步观测表。
-- `scripts/action_chain_uat.py`：准备、运行和状态查询工具；使用工作流 API 执行 Action，不直写业务结果。
+- `scripts/action_chain_uat.py`：准备、运行和状态查询工具；使用本地 psycopg 连接控制存储、使用工作流 API 执行 Action，不直写业务结果，不需要 Docker CLI。
 - `docker-compose.uat.yml`：仅为本地验收启用征信、授权、反欺诈和电核合成沙箱。
 
 ## 执行方式
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.uat.yml up -d --build --wait
-python scripts/action_chain_uat.py prepare
-python scripts/action_chain_uat.py run
-python scripts/action_chain_uat.py status
+.\start.cmd
+.\.venv\Scripts\python.exe scripts/action_chain_uat.py prepare
+.\.venv\Scripts\python.exe scripts/action_chain_uat.py run
+.\.venv\Scripts\python.exe scripts/action_chain_uat.py status
 ```
+
+本地 `.env.local` 中 `CREDIT_PROVIDER_MODE`、`CREDIT_CONSENT_MODE`、`FRAUD_PROVIDER_MODE` 和 `PHONE_TASK_DISPATCH_MODE` 必须均为 `sandbox`。修改后先 `stop.cmd` 再 `start.cmd`，配置与运行中状态不一致时验收脚本会拒绝执行。Windows 运行方式见 `WINDOWS_LOCAL_RUNTIME.md`。
 
 `prepare` 和 `run` 均为幂等入口。已完成的工作流步骤只读取验证，不会再次派发；要进行一轮全新的验收，应复制场景并更换场景号、申请号、人员业务主键、VIN、经销商编号和工作流请求号。
 

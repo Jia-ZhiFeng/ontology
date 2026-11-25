@@ -40,25 +40,29 @@ ABox 类型化 VID、稳定关系 rank 和安全迁移规则见 `PERSONAL_CREDIT
 草稿、审核、批准、发布和受控回滚流程见 `PERSONAL_CREDIT_ONTOLOGY_VERSION_WORKFLOW.md`。
 PostgreSQL 一致性快照、目录驱动字段校验、阶段性 NULL 和同步门禁见 `PERSONAL_CREDIT_DATA_QUALITY.md`。
 已发布图谱的服务端检索、1–3 hops、模式筛选、分页与截断语义见 `PERSONAL_CREDIT_GRAPH_QUERY.md`。
-Docker Compose 就绪门禁、NebulaGraph Storage 注册、健康检查和数据卷注意事项见 `DOCKER_RUNTIME_RELIABILITY.md`。
+Windows CMD 一键启动、WSL2 数据库、独立本地配置与数据目录见 `WINDOWS_LOCAL_RUNTIME.md`。可选 Docker Compose 的旧部署说明见 `DOCKER_RUNTIME_RELIABILITY.md`。
 发布模型、审核、数据库覆盖和图谱规模的统一统计源见 `personal_credit_release_metrics.json`；文档统计一致性由自动化测试保护。
 
 ## 启动
 
-需要 Docker Desktop / Docker Compose：
+Windows 默认使用 CMD 一键启动，不依赖 Docker Desktop 或 Docker Compose。需要 Python 3.10+ 和独立的 Ubuntu 24.04 WSL2；本机已安装的环境可直接使用。
 
-```bash
-docker compose up -d --build --wait
+```cmd
+start.cmd
 ```
 
-- 本体建模后台：http://localhost:8080
-- 个人信审 Agent 工作台（主界面）：http://localhost:8080/credit-review.html
-- 旧版信审流程工作台（兼容入口）：http://localhost:8080/workbench.html
-- 后端 API：http://localhost:8000/docs
-- PostgreSQL：localhost:5432
-- NebulaGraph：localhost:9669
+- 也可双击根目录 `start.cmd`。首次自动准备 Python 依赖、WSL PostgreSQL 16 / NebulaGraph 3.8、独立业务数据库和确定性本体基线，之后等待健康检查通过再打开工作台。
+- `stop.cmd` 正常停止本项目服务并保留数据；`status.cmd` 显示运行状态；`scripts/setup-windows.cmd` 可提前只准备依赖。
+- 本体建模后台：http://127.0.0.1:8080
+- 个人信审 Agent 工作台（主界面）：http://127.0.0.1:8080/credit-review.html
+- 旧版信审流程工作台（兼容入口）：http://127.0.0.1:8080/workbench.html
+- 后端 API：http://127.0.0.1:8000/docs
+- PostgreSQL：127.0.0.1:5433
+- NebulaGraph：127.0.0.1:9669
 
-Compose 会依次等待 PostgreSQL、NebulaGraph Meta/Storage/Graph、Storage Host `ONLINE`、后端和前端真实就绪；不再依赖固定等待时间。配置写在 `.env`，生产环境请替换默认口令。不要在需要保留数据时执行 `docker compose down -v`。
+本地配置由启动器生成至 `.env.local`，从既有 `.env` 继承业务设置后切换为本机地址、独立凭据与本机会话，原 `.env` 不被修改。数据库和图谱保存在 WSL Linux 文件系统，原 Docker 数据卷不会被读取、覆盖或自动迁移。详细说明见 `WINDOWS_LOCAL_RUNTIME.md`。
+
+原 Compose 文件作为可选部署方式保留，仍可使用 `docker compose up -d --build --wait`。它使用 `.env` 和原 Docker 数据卷，不能与本地运行环境同时占用相同端口；不要在需要保留数据时执行 `docker compose down -v`。
 
 ## 访问与隐私
 

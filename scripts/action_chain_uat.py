@@ -75,27 +75,30 @@ def _run(command: list[str], *, stdin: str | None = None) -> str:
 
 
 def _psql(sql: str) -> str:
-    return _run(
-        [
-            "docker",
-            "compose",
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-X",
-            "-q",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            "credit",
-            "-d",
-            "credit_ontology",
-            "-A",
-            "-t",
-        ],
-        stdin=sql,
-    )
+    import psycopg
+    env = _read_env()
+    def cell(value):
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(value, bool):
+            return "t" if value else "f"
+        return "" if value is None else str(value)
+    lines = []
+    try:
+        with psycopg.connect(
+            host=env.get("POSTGRES_HOST", "127.0.0.1"), port=int(env.get("POSTGRES_PORT", "5433")),
+            dbname=env.get("POSTGRES_DATABASE", "credit_ontology"), user=env.get("POSTGRES_USER", "credit"),
+            password=env.get("POSTGRES_PASSWORD", ""), connect_timeout=5, autocommit=True,
+        ) as connection, connection.cursor() as cursor:
+            cursor.execute(sql, prepare=False)
+            while True:
+                if cursor.description:
+                    lines.extend("|".join(cell(value) for value in row) for row in cursor.fetchall())
+                if not cursor.nextset():
+                    break
+    except psycopg.Error as error:
+        raise UatError(f"本地 PostgreSQL 操作失败：{type(error).__name__}；请检查服务与 .env.local") from error
+    return "\n".join(lines)
 
 
 def _json_document_sql(document: dict[str, Any], delimiter: str) -> str:
@@ -151,16 +154,12 @@ def _validate_scenario(scenario: dict[str, Any]) -> None:
 
 
 def _read_env() -> dict[str, str]:
+    from dotenv import dotenv_values
     values: dict[str, str] = {}
-    env_path = ROOT / ".env"
-    if not env_path.exists():
-        return values
-    for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+    for name in (".env", ".env.local"):
+        path = ROOT / name
+        if path.exists():
+            values.update({key: value for key, value in dotenv_values(path, interpolate=False).items() if value is not None})
     return values
 
 
@@ -310,18 +309,13 @@ def prepare(
 
 
 def _runtime_modes() -> dict[str, str]:
-    code = (
-        "import json,os;keys=('CREDIT_PROVIDER_MODE','CREDIT_CONSENT_MODE',"
-        "'FRAUD_PROVIDER_MODE','PHONE_TASK_DISPATCH_MODE');"
-        "print(json.dumps({k:os.getenv(k,'') for k in keys}))"
-    )
-    output = _run(
-        ["docker", "compose", "exec", "-T", "backend", "python", "-c", code]
-    )
-    try:
-        return json.loads(output.splitlines()[-1])
-    except (json.JSONDecodeError, IndexError) as error:
-        raise UatError("无法读取后端外部依赖运行模式") from error
+    from windows_runtime import configuration_digest, load_local_config, read_state, service_owned
+    state = read_state()
+    if not service_owned(state.get("services", {}).get("backend")):
+        raise UatError("本地后端尚未由 start.cmd 启动")
+    if state.get("configuration_digest") != configuration_digest(load_local_config()):
+        raise UatError("本地配置与运行中后端不一致，请 stop.cmd 后重新 start.cmd")
+    return dict(state.get("runtime_modes", {}))
 
 
 def _assert_runtime(scenario: dict[str, Any]) -> None:
@@ -336,8 +330,7 @@ def _assert_runtime(scenario: dict[str, Any]) -> None:
         raise UatError(
             "UAT 沙箱尚未启用："
             f"{json.dumps(mismatches, ensure_ascii=False)}。请先运行 "
-            "docker compose -f docker-compose.yml -f docker-compose.uat.yml "
-            "up -d --force-recreate backend frontend"
+            "stop.cmd，在 .env.local 中将上述模式设为 sandbox，再运行 start.cmd"
         )
 
 

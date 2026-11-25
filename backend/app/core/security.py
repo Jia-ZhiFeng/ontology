@@ -305,11 +305,11 @@ def _mask_text(value:str)->str:
     return PHONE_PATTERN.sub(lambda match:f"{match.group(1)}****{match.group(2)}",value)
 
 
-def _mask_named_value(key:str,value):
+def _mask_named_value(key:str,value,*,schema_names:bool=False):
     lowered=key.lower().split(".")[-1].replace("-","_")
     if value is None:
         return None
-    if lowered=="name" and isinstance(value,str) and not re.search(r"[\u3400-\u9fff]",value):
+    if lowered=="name" and schema_names and isinstance(value,str):
         return _mask_text(value)
     if lowered not in SENSITIVE_KEYS:
         return None
@@ -322,15 +322,20 @@ def _mask_named_value(key:str,value):
     return "[已脱敏]"
 
 
-def mask_payload(value,key:str=""):
+def mask_payload(value,key:str="",*,schema_names:bool=False):
     """Recursively redact personal and financial values while preserving response shape."""
-    named=_mask_named_value(key,value)
+    # Ontology envelopes can contain validation evidence and persisted audits.
+    # Their business values must not inherit the schema-name exemption.
+    if key in {"samples","violations","facts","evidence","audit","audit_result",
+               "input_summary","result_summary","request_payload"}:
+        schema_names=False
+    named=_mask_named_value(key,value,schema_names=schema_names)
     if named is not None:
         return named
     if isinstance(value,dict):
-        return {item_key:mask_payload(item_value,str(item_key)) for item_key,item_value in value.items()}
+        return {item_key:mask_payload(item_value,str(item_key),schema_names=schema_names) for item_key,item_value in value.items()}
     if isinstance(value,(list,tuple)):
-        return [mask_payload(item,key) for item in value]
+        return [mask_payload(item,key,schema_names=schema_names) for item in value]
     if isinstance(value,str):
         stripped=value.strip()
         if stripped and stripped[0] in "[{":
@@ -339,9 +344,14 @@ def mask_payload(value,key:str=""):
             except (ValueError,TypeError):
                 pass
             else:
-                return json.dumps(mask_payload(parsed),ensure_ascii=False,default=str)
+                return json.dumps(mask_payload(parsed,schema_names=schema_names),ensure_ascii=False,default=str)
         return _mask_text(value)
     return value
+
+
+def mask_schema_payload(value):
+    """For ontology definitions/catalogs only; business payloads mask every name."""
+    return mask_payload(value,schema_names=True)
 
 
 def mask_graph_snapshot(snapshot:dict)->dict:
@@ -352,6 +362,9 @@ def mask_graph_snapshot(snapshot:dict)->dict:
     identifier_map={identifier:_mask_text(identifier) for identifier in identifiers}
     output=mask_payload(snapshot)
     for index,node in enumerate(output.get("nodes",[])):
+        source=snapshot["nodes"][index]
+        if "ontology" in source.get("tags",[]) and "entity" not in source.get("tags",[]):
+            node=output["nodes"][index]=mask_schema_payload(source)
         original=str(snapshot.get("nodes",[])[index].get("id"))
         node["id"]=identifier_map.get(original,_mask_text(original))
     for index,edge in enumerate(output.get("edges",[])):

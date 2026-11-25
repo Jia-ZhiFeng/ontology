@@ -95,7 +95,7 @@ function backendAuthGuidance(){return connectionConfig().local?"本机安全会�
 const savedSafety=readSession(STORAGE.safety,{}),savedConversation=readSession(STORAGE.conversation,{});
 const state={
  online:false,authenticated:false,authMode:"anonymous",authError:null,sessionExpiresAt:null,connecting:false,busy:false,currentView:"chat",runFilter:"all",actionFilter:"all",
- summary:null,definition:null,workflows:[],currentWorkflow:null,workflowDetail:null,readiness:null,
+  summary:null,definition:null,workflows:[],currentWorkflow:null,workflowDetail:null,readiness:null,workflowContextRequest:0,
  agentTools:[],executionBoundary:null,actionCatalog:{},lastAgentResponse:null,lastPrompt:"",pendingWorkflowAction:null,activeRun:null,
  models:[],activeModelId:null,selectedModelId:null,modelProviders:[],modelLoading:false,modelActionBusy:false,modelsLoaded:false,modelAccessError:null,
  conversationId:typeof savedConversation.conversation_id==="string"?savedConversation.conversation_id:null,conversationApplicationId:typeof savedConversation.application_id==="string"?savedConversation.application_id:null,conversationOntologyVersion:typeof savedConversation.ontology_version==="string"?savedConversation.ontology_version:null,turnIndex:Number.isFinite(Number(savedConversation.turn_index))?Number(savedConversation.turn_index):0,contextWindow:[],contextWindowSize:Number.isFinite(Number(savedConversation.context_count))?Number(savedConversation.context_count):0,contextPending:false,
@@ -192,14 +192,20 @@ function renderContext(){
 }
 async function loadWorkflowContext(workflowId,options){
  const item=state.workflows.find(row=>row.workflow_id===workflowId);if(!item)return;
+ const requestId=state.workflowContextRequest=(state.workflowContextRequest||0)+1;
+ const isCurrent=()=>state.workflowContextRequest===requestId&&state.currentWorkflow&&state.currentWorkflow.workflow_id===workflowId;
  if(options&&options.resetConversation)resetConversationContext();else ensureConversationApplication(item.application_id,item.ontology_version);
  state.currentWorkflow=item;state.workflowDetail=null;state.readiness=null;renderContext();
  try{
-  state.workflowDetail=await api("/workflows/personal-credit/"+encodeURIComponent(workflowId));
-  try{state.readiness=await api("/agents/personal-credit/"+encodeURIComponent(item.application_id)+"/readiness?ontology_version="+encodeURIComponent(item.ontology_version||""))}catch(error){state.readiness={status:"BLOCKED",snapshot_error:error.message,evidence:{},available_tools:[],missing_evidence:[]}}
+  const detail=await api("/workflows/personal-credit/"+encodeURIComponent(workflowId));
+  if(!isCurrent())return;
+  let readiness;
+  try{readiness=await api("/agents/personal-credit/"+encodeURIComponent(item.application_id)+"/readiness?ontology_version="+encodeURIComponent(item.ontology_version||""))}catch(error){readiness={status:"BLOCKED",snapshot_error:error.message,evidence:{},available_tools:[],missing_evidence:[]}}
+  if(!isCurrent())return;
+  state.workflowDetail=detail;state.readiness=readiness;
   renderContext();addEvent("已加载申请上下文",item.application_id,"done");
   if(options&&options.resetConversation)newTask(false,{preserveConversation:true});
- }catch(error){toast(error.message,"error");addEvent("申请上下文加载失败",error.message,"wait")}
+ }catch(error){if(!isCurrent())return;toast(error.message,"error");addEvent("申请上下文加载失败",error.message,"wait")}
 }
 
 async function connectBackend(silent,overrideConfig){
